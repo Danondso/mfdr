@@ -48,3 +48,4 @@ tests/fixtures/*
 
 # macOS
 .DS_Store
+settings.local.json
