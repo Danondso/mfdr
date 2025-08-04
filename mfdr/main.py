@@ -451,16 +451,16 @@ def qscan(ctx: click.Context, directory: Path, dry_run: bool, limit: Optional[in
             console.print("[warning]ℹ️ No audio files found[/warning]")
             return
         
-        # Load checkpoint if resuming
-        skip_files = set()
+        # Load checkpoint if resuming - store as strings to avoid duplicate Path creation
+        skip_files_str = set()
         if resume and checkpoint_file.exists():
             try:
                 with open(checkpoint_file) as f:
                     checkpoint_data = json.load(f)
                     if checkpoint_data.get('directory') == str(directory):
-                        skip_files = set(Path(p) for p in checkpoint_data.get('processed_files', []))
+                        skip_files_str = set(checkpoint_data.get('processed_files', []))
                         stats = checkpoint_data.get('stats', {})
-                        console.print(f"[info]📌 Resuming from checkpoint: {len(skip_files)} files already processed[/info]")
+                        console.print(f"[info]📌 Resuming from checkpoint: {len(skip_files_str)} files already processed[/info]")
                         if stats:
                             console.print(f"[dim]   Previous stats: {stats.get('corrupted', 0)} corrupted, {stats.get('quarantined', 0)} quarantined[/dim]")
                         console.print()
@@ -472,11 +472,11 @@ def qscan(ctx: click.Context, directory: Path, dry_run: bool, limit: Optional[in
             console.print("[info]ℹ️ No checkpoint found, starting fresh scan[/info]\n")
         
         # Statistics
-        checked_count = len(skip_files)
+        checked_count = len(skip_files_str)
         corrupted_count = 0
         quarantined_count = 0
         error_count = 0
-        processed_files = list(skip_files)
+        processed_files = list(skip_files_str)  # Keep as strings
         
         start_time = time.time()
         last_checkpoint_save = 0
@@ -494,12 +494,12 @@ def qscan(ctx: click.Context, directory: Path, dry_run: bool, limit: Optional[in
             scan_task = progress.add_task("[cyan]Scanning files...", total=len(audio_files))
             
             # Skip already processed files in progress bar
-            if skip_files:
-                progress.advance(scan_task, len(skip_files))
+            if skip_files_str:
+                progress.advance(scan_task, len(skip_files_str))
             
             for file_path in audio_files:
-                # Skip if already processed
-                if file_path in skip_files:
+                # Skip if already processed (compare as strings)
+                if str(file_path) in skip_files_str:
                     continue
                 checked_count += 1
                 
@@ -551,15 +551,15 @@ def qscan(ctx: click.Context, directory: Path, dry_run: bool, limit: Optional[in
                     error_count += 1
                     console.print(f"[error]❌ Error checking {file_path.name}: {e}[/error]")
                 
-                # Add to processed files
-                processed_files.append(file_path)
+                # Add to processed files (store as string)
+                processed_files.append(str(file_path))
                 
                 # Save checkpoint periodically
                 if checked_count - last_checkpoint_save >= checkpoint_interval:
                     try:
                         checkpoint_data = {
                             'directory': str(directory),
-                            'processed_files': [str(p) for p in processed_files],
+                            'processed_files': processed_files,  # Already strings
                             'timestamp': time.time(),
                             'stats': {
                                 'checked': checked_count,
@@ -615,7 +615,7 @@ def qscan(ctx: click.Context, directory: Path, dry_run: bool, limit: Optional[in
         try:
             checkpoint_data = {
                 'directory': str(directory),
-                'processed_files': [str(p) for p in processed_files],
+                'processed_files': processed_files,  # Already strings
                 'timestamp': time.time(),
                 'stats': {
                     'checked': checked_count,
