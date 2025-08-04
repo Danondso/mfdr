@@ -37,10 +37,11 @@ jobs:
 
       - name: Run fast tests
         run: |
-          pytest tests/ \
+          python -m pytest tests/ \
             -m "not slow" \
             --cov=mfdr \
             --cov-report=term-missing \
+            --cov-config=.coveragerc \
             --cov-fail-under=70 \
             -v \
             --tb=short \
@@ -49,8 +50,9 @@ jobs:
       - name: Check critical files
         run: |
           # Ensure critical modules have sufficient coverage
-          pytest tests/test_completeness_checker.py \
+          python -m pytest tests/test_completeness_checker.py \
             --cov=mfdr.completeness_checker \
+            --cov-config=.coveragerc \
             --cov-fail-under=75 \
             --tb=short
 
