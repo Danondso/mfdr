@@ -227,8 +227,7 @@ jobs:
 
       - name: Check for outdated dependencies
         run: |
-          pip install pip-outdated
-          pip-outdated || true
+          pip list --outdated || true
 
   sast-scan:
     name: Static Application Security Testing
