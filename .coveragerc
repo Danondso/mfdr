@@ -5,6 +5,7 @@ omit =
     */venv/*
     */__pycache__/*
     */test_*.py
+    */site-packages/*
 
 [report]
 exclude_lines =

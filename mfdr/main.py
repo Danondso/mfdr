@@ -119,8 +119,12 @@ def scan(ctx: click.Context, search_dir: Optional[Path], dry_run: bool,
                         is_corrupted = True
                         corrupted_count += 1
                         corruption_details = completeness_details
-                        console.print(f"🚨 CORRUPTED: {track.artist} - {track.name}", style="red")
-                        logging.warning(f"🚨 CORRUPTED: {track.artist} - {track.name} -> {track.location}")
+                        # Extract reason from details
+                        reason = completeness_details.get('error', completeness_details.get('quarantine_reason', ''))
+                        if not reason and completeness_details.get('checks_failed'):
+                            reason = ", ".join(completeness_details['checks_failed'][:2])  # Show first 2 failed checks
+                        console.print(f"🚨 CORRUPTED: {track.artist} - {track.name} - {reason}", style="red")
+                        logging.warning(f"🚨 CORRUPTED: {track.artist} - {track.name} -> {track.location} - {reason}")
                 
                 # Process corrupted tracks OR missing tracks
                 if is_corrupted or track.is_missing():
@@ -385,7 +389,6 @@ def qscan(ctx: click.Context, directory: Path, dry_run: bool, limit: Optional[in
                 
                 if not is_complete:
                     corrupted_count += 1
-                    console.print(f"🚨 CORRUPTED: {file_path.name}", style="red")
                     
                     # Determine quarantine reason
                     if details.get('ffmpeg_seek_error'):
@@ -396,6 +399,15 @@ def qscan(ctx: click.Context, directory: Path, dry_run: bool, limit: Optional[in
                         reason = "audio_integrity_failure"
                     else:
                         reason = "general_corruption"
+                    
+                    # Also extract display reason for user
+                    display_reason = details.get('error', details.get('quarantine_reason', ''))
+                    if not display_reason and details.get('checks_failed'):
+                        display_reason = ", ".join(details['checks_failed'][:2])  # Show first 2 failed checks
+                    if not display_reason:
+                        display_reason = reason.replace('_', ' ')  # Fallback to quarantine reason
+                    
+                    console.print(f"🚨 CORRUPTED: {file_path.name} - {display_reason}", style="red")
                     
                     if dry_run:
                         console.print(f"   Would quarantine to: {quarantine_path / reason / file_path.name}")

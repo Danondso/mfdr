@@ -1,5 +1,16 @@
 # mfdr - Music File Damage Reporter & Apple Music Manager
 
+[![CI Pipeline](https://github.com/Danondso/mfdr/actions/workflows/ci.yml/badge.svg)](https://github.com/Danondso/mfdr/actions/workflows/ci.yml)
+[![Tests](https://github.com/Danondso/mfdr/actions/workflows/test.yml/badge.svg)](https://github.com/Danondso/mfdr/actions/workflows/test.yml)
+[![Security Scan](https://github.com/Danondso/mfdr/actions/workflows/security.yml/badge.svg)](https://github.com/Danondso/mfdr/actions/workflows/security.yml)
+[![codecov](https://codecov.io/gh/Danondso/mfdr/branch/main/graph/badge.svg)](https://codecov.io/gh/Danondso/mfdr)
+[![Python Version](https://img.shields.io/badge/python-3.9%20%7C%203.10%20%7C%203.11%20%7C%203.12-blue)](https://www.python.org/)
+[![Version](https://img.shields.io/badge/version-0.1.0-green)](https://github.com/Danondso/mfdr/releases)
+[![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+[![Code style: black](https://img.shields.io/badge/code%20style-black-000000.svg)](https://github.com/psf/black)
+[![Checked with mypy](https://img.shields.io/badge/mypy-checked-blue)](http://mypy-lang.org/)
+[![Pre-commit](https://img.shields.io/badge/pre--commit-enabled-brightgreen?logo=pre-commit&logoColor=white)](https://github.com/pre-commit/pre-commit)
+
 Complete toolkit for checking music file integrity and managing your Apple Music library.
 
 ## Features

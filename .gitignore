@@ -41,10 +41,18 @@ quarantine/
 *.log
 
 # Test fixtures - audio files for testing
-tests/fixtures/*
-# Keep the README files
+tests/fixtures/audio/**/*.mp3
+tests/fixtures/audio/**/*.m4a
+tests/fixtures/audio/**/*.m4p
+tests/fixtures/audio/**/*.mpa
+tests/fixtures/valid/*.mp3
+tests/fixtures/valid/*.m4a
+# Keep the README and XML files
 !tests/fixtures/audio/README.md
 !tests/fixtures/audio/*/README.md
+!tests/fixtures/library_xml/
+!tests/fixtures/library_xml/*.xml
 
 # macOS
 .DS_Store
+settings.local.json

@@ -1,0 +1,175 @@
+name: Security Scan
+
+on:
+  workflow_dispatch:
+  schedule:
+    # Run every Monday at 9 AM UTC
+    - cron: '0 9 * * 1'
+  push:
+    paths:
+      - 'requirements*.txt'
+      - 'pyproject.toml'
+      - 'poetry.lock'
+      - 'Pipfile.lock'
+
+jobs:
+  comprehensive-security-scan:
+    name: Comprehensive Security Analysis
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      security-events: write
+      
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # Full history for better analysis
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Cache dependencies
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/pip
+          key: ${{ runner.os }}-pip-security-${{ hashFiles('**/requirements*.txt', '**/pyproject.toml') }}
+
+      - name: Install security tools
+        run: |
+          python -m pip install --upgrade pip
+          pip install safety bandit[toml] pip-audit semgrep
+
+      - name: Install project dependencies
+        run: |
+          pip install -e . || pip install -r requirements.txt || true
+
+      - name: Run Safety check
+        id: safety
+        continue-on-error: true
+        run: |
+          safety check --json --output safety-report.json
+          echo "safety_exit_code=$?" >> $GITHUB_OUTPUT
+
+      - name: Run Bandit
+        id: bandit
+        continue-on-error: true
+        run: |
+          bandit -r mfdr/ -ll -f json -o bandit-report.json
+          echo "bandit_exit_code=$?" >> $GITHUB_OUTPUT
+
+      - name: Run pip-audit
+        id: pip_audit
+        continue-on-error: true
+        run: |
+          pip-audit --desc --format json --output pip-audit-report.json
+          echo "pip_audit_exit_code=$?" >> $GITHUB_OUTPUT
+
+      - name: Run Semgrep security audit
+        id: semgrep
+        continue-on-error: true
+        run: |
+          semgrep --config=auto --json --output=semgrep-report.json mfdr/
+          echo "semgrep_exit_code=$?" >> $GITHUB_OUTPUT
+
+      - name: Check for secrets with TruffleHog
+        uses: trufflesecurity/trufflehog@v3.64.6
+        with:
+          path: ./
+          base: main
+          head: HEAD
+
+      - name: OWASP Dependency Check
+        uses: dependency-check/Dependency-Check_Action@v3.0.3
+        with:
+          project: 'mfdr'
+          path: '.'
+          format: 'JSON'
+          args: >
+            --enableRetired
+            --enableExperimental
+
+      - name: Generate Security Report
+        if: always()
+        run: |
+          echo "# Security Scan Report" > security-summary.md
+          echo "" >> security-summary.md
+          echo "## Scan Results Summary" >> security-summary.md
+          echo "" >> security-summary.md
+          
+          echo "| Tool | Status |" >> security-summary.md
+          echo "|------|--------|" >> security-summary.md
+          
+          if [ "${{ steps.safety.outputs.safety_exit_code }}" -eq 0 ]; then
+            echo "| Safety | ✅ Passed |" >> security-summary.md
+          else
+            echo "| Safety | ⚠️ Issues Found |" >> security-summary.md
+          fi
+          
+          if [ "${{ steps.bandit.outputs.bandit_exit_code }}" -eq 0 ]; then
+            echo "| Bandit | ✅ Passed |" >> security-summary.md
+          else
+            echo "| Bandit | ⚠️ Issues Found |" >> security-summary.md
+          fi
+          
+          if [ "${{ steps.pip_audit.outputs.pip_audit_exit_code }}" -eq 0 ]; then
+            echo "| pip-audit | ✅ Passed |" >> security-summary.md
+          else
+            echo "| pip-audit | ⚠️ Issues Found |" >> security-summary.md
+          fi
+          
+          if [ "${{ steps.semgrep.outputs.semgrep_exit_code }}" -eq 0 ]; then
+            echo "| Semgrep | ✅ Passed |" >> security-summary.md
+          else
+            echo "| Semgrep | ⚠️ Issues Found |" >> security-summary.md
+          fi
+          
+          echo "" >> security-summary.md
+          echo "## Detailed Reports" >> security-summary.md
+          echo "" >> security-summary.md
+          echo "Check the artifacts for detailed reports from each tool." >> security-summary.md
+          
+          cat security-summary.md >> $GITHUB_STEP_SUMMARY
+
+      - name: Upload Security Reports
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: security-reports
+          path: |
+            *-report.json
+            security-summary.md
+            reports/
+
+      - name: Create Issue if Critical Vulnerabilities Found
+        if: failure()
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const title = `Security Alert: Vulnerabilities Detected - ${new Date().toISOString().split('T')[0]}`;
+            const body = `
+            ## Security Scan Alert
+            
+            Critical security vulnerabilities were detected in the latest scan.
+            
+            **Scan Date:** ${new Date().toISOString()}
+            **Triggered By:** ${context.eventName}
+            
+            Please review the security reports in the [workflow run artifacts](${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}).
+            
+            ### Action Required
+            - Review the detailed security reports
+            - Address critical and high severity issues immediately
+            - Update dependencies as needed
+            - Re-run security scans after fixes
+            `;
+            
+            await github.rest.issues.create({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              title: title,
+              body: body,
+              labels: ['security', 'high-priority']
+            });
