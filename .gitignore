@@ -56,3 +56,4 @@ tests/fixtures/valid/*.m4a
 # macOS
 .DS_Store
 settings.local.json
+.qscan_checkpoint.json
