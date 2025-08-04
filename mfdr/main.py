@@ -254,7 +254,8 @@ def scan(ctx: click.Context, search_dir: Optional[Path], dry_run: bool,
                     title="⏸️  Paused",
                     style="warning"
                 ))
-                raise
+                # Graceful exit after showing resume instructions
+                return
             except Exception as e:
                 if current_track:
                     console.print(Panel(
@@ -633,9 +634,12 @@ def qscan(ctx: click.Context, directory: Path, dry_run: bool, limit: Optional[in
                 title="⏸️  Paused",
                 style="warning"
             ))
-        except Exception:
-            console.print("[error]Could not save checkpoint[/error]")
-        raise
+            # Graceful exit after saving checkpoint
+            return
+        except Exception as e:
+            console.print(f"[error]Could not save checkpoint: {e}[/error]")
+            # Still exit gracefully even if checkpoint save failed
+            return
     
     except Exception as e:
         console.print(f"[error]❌ Error: {e}[/error]")

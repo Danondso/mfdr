@@ -151,8 +151,8 @@ class TestQscanCheckpoint:
                 with patch('builtins.open', mock_open()) as mock_file:
                     result = runner.invoke(cli, ['qscan', str(temp_music_dir)])
                     
-                    # KeyboardInterrupt should be caught and checkpoint saved
-                    assert result.exit_code == 1
+                    # KeyboardInterrupt should be caught gracefully and checkpoint saved
+                    assert result.exit_code == 0  # Graceful exit
                     assert 'directory' in checkpoint_data
                     assert checkpoint_data['directory'] == str(temp_music_dir)
                     assert len(checkpoint_data['processed_files']) == 2
