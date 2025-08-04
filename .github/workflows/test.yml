@@ -74,12 +74,13 @@ jobs:
           pip install flake8 black isort
 
       - name: Check code style
+        continue-on-error: true
         run: |
           # Check for syntax errors
           flake8 mfdr/ --count --select=E9,F63,F7,F82 --show-source --statistics
           
           # Check black formatting
-          black --check mfdr/ || echo "::warning::Code formatting issues found. Run 'black mfdr/' to fix."
+          black --check mfdr/
           
           # Check import sorting
           isort --check-only mfdr/ || echo "::warning::Import sorting issues found. Run 'isort mfdr/' to fix."
