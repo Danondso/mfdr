@@ -102,11 +102,15 @@ To export Library.xml: Apple Music → File → Library → Export Library...
 ## Quarantine Organization
 
 Bad files are organized by issue type:
-- `quarantine/drm/` - DRM protected files
+- `quarantine/drm/` - DRM protected files (when using check command)
+- `quarantine/drm_protected/` - DRM protected files (when using qscan)
 - `quarantine/no_metadata/` - Missing metadata
 - `quarantine/truncated/` - Duration mismatches  
-- `quarantine/corrupted/` - Decode failures
+- `quarantine/corrupted/` - General corruption or decode failures
+- `quarantine/decode_failure/` - FFmpeg decode errors
 - `quarantine/ffmpeg_seek_failure/` - Seek/decode errors
+- `quarantine/audio_integrity_failure/` - Audio integrity check failures
+- `quarantine/general_corruption/` - Other unspecified corruption
 
 ## Supported Formats
 
@@ -126,7 +130,7 @@ $ ./venv/bin/python -m mfdr check ~/Music/Albums/
       Summary      
 ┏━━━━━━━━━┳━━━━━━━┓
 ┃ Status  ┃ Count ┃
-┡━━━━━━━━━╇━━━━━━━┩
+┡━━━━━━━━━╇━━━━━┩
 │ ✅ Good │   154 │
 │ ❌ Bad  │     2 │
 └─────────┴───────┘
