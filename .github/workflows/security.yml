@@ -102,25 +102,25 @@ jobs:
           echo "| Tool | Status |" >> security-summary.md
           echo "|------|--------|" >> security-summary.md
           
-          if [ "${{ steps.safety.outputs.safety_exit_code }}" == "0" ]; then
+          if [ "${{ steps.safety.outputs.safety_exit_code }}" -eq 0 ]; then
             echo "| Safety | ✅ Passed |" >> security-summary.md
           else
             echo "| Safety | ⚠️ Issues Found |" >> security-summary.md
           fi
           
-          if [ "${{ steps.bandit.outputs.bandit_exit_code }}" == "0" ]; then
+          if [ "${{ steps.bandit.outputs.bandit_exit_code }}" -eq 0 ]; then
             echo "| Bandit | ✅ Passed |" >> security-summary.md
           else
             echo "| Bandit | ⚠️ Issues Found |" >> security-summary.md
           fi
           
-          if [ "${{ steps.pip_audit.outputs.pip_audit_exit_code }}" == "0" ]; then
+          if [ "${{ steps.pip_audit.outputs.pip_audit_exit_code }}" -eq 0 ]; then
             echo "| pip-audit | ✅ Passed |" >> security-summary.md
           else
             echo "| pip-audit | ⚠️ Issues Found |" >> security-summary.md
           fi
           
-          if [ "${{ steps.semgrep.outputs.semgrep_exit_code }}" == "0" ]; then
+          if [ "${{ steps.semgrep.outputs.semgrep_exit_code }}" -eq 0 ]; then
             echo "| Semgrep | ✅ Passed |" >> security-summary.md
           else
             echo "| Semgrep | ⚠️ Issues Found |" >> security-summary.md
