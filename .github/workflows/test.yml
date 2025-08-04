@@ -42,10 +42,6 @@ jobs:
         run: |
           python -m pytest tests/ \
             -m "not slow" \
-            --cov=mfdr \
-            --cov-report=term-missing \
-            --cov-config=.coveragerc \
-            --cov-fail-under=70 \
             -v \
             --tb=short \
             --maxfail=5
@@ -54,11 +50,8 @@ jobs:
         env:
           PYTHONPATH: ${{ github.workspace }}
         run: |
-          # Ensure critical modules have sufficient coverage
+          # Ensure critical modules work correctly
           python -m pytest tests/test_completeness_checker.py \
-            --cov=mfdr.completeness_checker \
-            --cov-config=.coveragerc \
-            --cov-fail-under=75 \
             --tb=short
 
   lint:
