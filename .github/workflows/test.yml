@@ -1,0 +1,126 @@
+name: Quick Tests
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+  push:
+    branches: [main, develop]
+
+jobs:
+  quick-test:
+    name: Quick Test Suite
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Cache pip packages
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/pip
+          key: ${{ runner.os }}-pip-${{ hashFiles('**/requirements*.txt', '**/pyproject.toml') }}
+          restore-keys: |
+            ${{ runner.os }}-pip-
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install pytest pytest-cov pytest-mock
+          pip install -e .
+
+      - name: Run fast tests
+        run: |
+          pytest tests/ \
+            -m "not slow" \
+            --cov=mfdr \
+            --cov-report=term-missing \
+            --cov-fail-under=70 \
+            -v \
+            --tb=short \
+            --maxfail=5
+
+      - name: Check critical files
+        run: |
+          # Ensure critical modules have sufficient coverage
+          pytest tests/test_completeness_checker.py \
+            --cov=mfdr.completeness_checker \
+            --cov-fail-under=75 \
+            --tb=short
+
+  lint:
+    name: Code Quality Check
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install linters
+        run: |
+          python -m pip install --upgrade pip
+          pip install flake8 black isort
+
+      - name: Check code style
+        run: |
+          # Check for syntax errors
+          flake8 mfdr/ --count --select=E9,F63,F7,F82 --show-source --statistics
+          
+          # Check black formatting
+          black --check mfdr/ || echo "::warning::Code formatting issues found. Run 'black mfdr/' to fix."
+          
+          # Check import sorting
+          isort --check-only mfdr/ || echo "::warning::Import sorting issues found. Run 'isort mfdr/' to fix."
+
+  security-quick:
+    name: Quick Security Check
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install security tools
+        run: |
+          python -m pip install --upgrade pip
+          pip install bandit[toml]
+
+      - name: Run Bandit
+        run: |
+          bandit -r mfdr/ -ll --skip B101,B601 -f json -o bandit-quick.json || true
+          # Parse and display summary
+          python -c "
+          import json
+          try:
+              with open('bandit-quick.json') as f:
+                  data = json.load(f)
+              metrics = data.get('metrics', {})
+              issues = data.get('results', [])
+              high_severity = [i for i in issues if i.get('issue_severity') == 'HIGH']
+              if high_severity:
+                  print(f'::error::Found {len(high_severity)} high severity security issues')
+                  for issue in high_severity[:3]:
+                      print(f\"  - {issue.get('filename')}:{issue.get('line_number')}: {issue.get('issue_text')}\")
+              else:
+                  print('✅ No high severity security issues found')
+          except Exception as e:
+              print(f'Could not parse Bandit results: {e}')
+          "
