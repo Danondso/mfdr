@@ -123,7 +123,7 @@ def scan(ctx: click.Context, search_dir: Optional[Path], dry_run: bool,
         
         # Get tracks from Apple Music with progress
         console.print(Panel.fit("📊 Loading Apple Music Library", style="header"))
-        tracks = apple_music.get_tracks(limit=limit)
+        tracks = list(apple_music.get_tracks(limit=limit))
         console.print(f"[success]✅ Loaded {len(tracks)} tracks[/success]\n")
         
         # Index available files with progress
