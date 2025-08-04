@@ -9,6 +9,13 @@ on:
     # Run security scans daily at 2 AM UTC
     - cron: '0 2 * * *'
 
+permissions:
+  contents: read
+  checks: write
+  pull-requests: write
+  security-events: write
+  actions: read
+
 jobs:
   security-scan:
     name: Security Vulnerability Scan
@@ -332,7 +339,10 @@ jobs:
           files: |
             **/test-results-*.xml
           check_name: Test Results
-          comment_mode: failures
+          comment_mode: off
+          check_run: false
+          compare_to_earlier_commit: false
+          job_summary: true
 
       - name: Create security summary
         if: always()
