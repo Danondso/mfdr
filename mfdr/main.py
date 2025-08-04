@@ -458,11 +458,17 @@ def qscan(ctx: click.Context, directory: Path, dry_run: bool, limit: Optional[in
                     checkpoint_data = json.load(f)
                     if checkpoint_data.get('directory') == str(directory):
                         skip_files = set(Path(p) for p in checkpoint_data.get('processed_files', []))
-                        console.print(f"[info]📌 Resuming from checkpoint: {len(skip_files)} files already processed[/info]\n")
+                        stats = checkpoint_data.get('stats', {})
+                        console.print(f"[info]📌 Resuming from checkpoint: {len(skip_files)} files already processed[/info]")
+                        if stats:
+                            console.print(f"[dim]   Previous stats: {stats.get('corrupted', 0)} corrupted, {stats.get('quarantined', 0)} quarantined[/dim]")
+                        console.print()
                     else:
                         console.print("[warning]⚠️ Checkpoint is for different directory, starting fresh[/warning]\n")
             except Exception as e:
                 console.print(f"[warning]⚠️ Could not load checkpoint: {e}[/warning]\n")
+        elif resume:
+            console.print("[info]ℹ️ No checkpoint found, starting fresh scan[/info]\n")
         
         # Statistics
         checked_count = len(skip_files)
@@ -564,8 +570,11 @@ def qscan(ctx: click.Context, directory: Path, dry_run: bool, limit: Optional[in
                         with open(checkpoint_file, 'w') as f:
                             json.dump(checkpoint_data, f, indent=2)
                         last_checkpoint_save = checked_count
-                    except Exception:
-                        pass  # Silently fail checkpoint save
+                        if ctx.obj.get('verbose'):
+                            console.print(f"[dim]💾 Checkpoint saved ({checked_count} files processed)[/dim]")
+                    except Exception as e:
+                        if ctx.obj.get('verbose'):
+                            console.print(f"[dim]⚠️ Could not save checkpoint: {e}[/dim]")
                 
                 progress.advance(scan_task)
         
