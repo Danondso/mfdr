@@ -45,7 +45,7 @@ jobs:
 
       - name: Check Python dependencies for vulnerabilities
         run: |
-          pip install -r requirements.txt || pip install .
+          pip install -r requirements.txt || pip install -e .
           safety check --json --continue-on-error
 
       - name: Run Bandit security linter
