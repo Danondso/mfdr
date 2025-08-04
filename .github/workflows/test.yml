@@ -42,8 +42,7 @@ jobs:
         run: |
           python -m pytest tests/ \
             -m "not slow" \
-            --cov=./mfdr \
-            --cov-source=./mfdr \
+            --cov=mfdr \
             --cov-report=term-missing \
             --cov-config=.coveragerc \
             --cov-fail-under=70 \
