@@ -12,7 +12,7 @@ from rich.console import Console
 from rich.logging import RichHandler
 from rich.table import Table
 from rich.panel import Panel
-from rich.progress import Progress, SpinnerColumn, TextColumn, BarColumn, TaskProgressColumn, TimeRemainingColumn
+from rich.progress import Progress, SpinnerColumn, TextColumn, BarColumn, TaskProgressColumn, TimeRemainingColumn, MofNCompleteColumn
 from rich.layout import Layout
 from rich.live import Live
 from rich.text import Text
@@ -146,8 +146,8 @@ def scan(ctx: click.Context, search_dir: Optional[Path], dry_run: bool,
             SpinnerColumn(),
             TextColumn("[progress.description]{task.description}"),
             BarColumn(style="cyan"),
-            TaskProgressColumn(),
-            TimeRemainingColumn(),
+            MofNCompleteColumn(),
+            TextColumn("[dim]tracks[/dim]"),
             console=console
         ) as progress:
             
@@ -346,7 +346,8 @@ def check(path: Path, quarantine: bool, verbose: bool) -> None:
             SpinnerColumn(),
             TextColumn("[progress.description]{task.description}"),
             BarColumn(style="cyan"),
-            TaskProgressColumn(),
+            MofNCompleteColumn(),
+            TextColumn("[dim]files[/dim]"),
             console=console
         ) as progress:
             
@@ -485,8 +486,8 @@ def qscan(ctx: click.Context, directory: Path, dry_run: bool, limit: Optional[in
             SpinnerColumn(),
             TextColumn("[progress.description]{task.description}"),
             BarColumn(style="cyan"),
-            TaskProgressColumn(),
-            TimeRemainingColumn(),
+            MofNCompleteColumn(),
+            TextColumn("[dim]files[/dim]"),
             console=console
         ) as progress:
             
@@ -730,7 +731,8 @@ def mscan(ctx: click.Context, xml_path: Path, search_dir: Optional[Path],
                     SpinnerColumn(),
                     TextColumn("[progress.description]{task.description}"),
                     BarColumn(style="cyan"),
-                    TaskProgressColumn(),
+                    MofNCompleteColumn(),
+                    TextColumn("[dim]tracks[/dim]"),
                     console=console
                 ) as progress:
                     
