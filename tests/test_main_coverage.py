@@ -69,7 +69,9 @@ class TestMainCLICoverage:
         result = runner.invoke(cli, ['scan', '--dry-run'])
         assert result.exit_code == 0, f"Expected exit code 0 for dry-run, got {result.exit_code}"
         assert "DRY RUN" in result.output or "dry run" in result.output.lower(), "Output should indicate dry-run mode"
-        assert mock_track.name in result.output, f"Track name '{mock_track.name}' should appear in output"
+        # Check that missing tracks were processed
+        assert "Missing tracks: 1" in result.output, "Should show 1 missing track in summary"
+        assert "No replacement candidates found" in result.output, "Should indicate no replacements found"
         # In dry-run mode, no actual file operations should occur
         mock_fm.index_files.assert_called_once()  # Should index files
         mock_fm.search_files.assert_called()  # Should search for files

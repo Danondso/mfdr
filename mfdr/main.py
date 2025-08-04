@@ -107,9 +107,7 @@ def scan(ctx: click.Context, search_dir: Optional[Path], dry_run: bool,
                     elapsed = time.time() - start_time
                     rate = processed_count / elapsed if elapsed > 0 else 0
                     console.print(f"📊 Progress: {processed_count} tracks processed, {corrupted_count} corrupted found ({rate:.1f} tracks/sec)")
-                
-                console.print(f"Processing: {track.artist} - {track.name}")
-                
+                                
                 # First, check if the track file is corrupted (even if not "missing")
                 is_corrupted = False
                 corruption_details = None
