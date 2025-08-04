@@ -183,12 +183,22 @@ jobs:
 
       - name: Check coverage threshold
         run: |
-          coverage_percent=$(python -c "import xml.etree.ElementTree as ET; tree = ET.parse('coverage.xml'); root = tree.getroot(); print(float(root.attrib['line-rate']) * 100)")
-          echo "Coverage: ${coverage_percent}%"
-          if (( $(echo "$coverage_percent < 70" | bc -l) )); then
-            echo "Coverage is below 70% threshold"
-            exit 1
-          fi
+          python -c "
+          import xml.etree.ElementTree as ET
+          import sys
+          
+          tree = ET.parse('coverage.xml')
+          root = tree.getroot()
+          coverage_percent = float(root.attrib['line-rate']) * 100
+          
+          print(f'Coverage: {coverage_percent:.2f}%')
+          
+          if coverage_percent < 70:
+              print('❌ Coverage is below 70% threshold')
+              sys.exit(1)
+          else:
+              print('✅ Coverage meets threshold')
+          "
 
   dependency-check:
     name: Dependency Security Check

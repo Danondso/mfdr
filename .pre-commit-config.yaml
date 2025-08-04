@@ -81,13 +81,6 @@ repos:
       - id: pyupgrade
         args: ['--py39-plus']
 
-  - repo: https://github.com/adamchainz/django-upgrade
-    rev: 1.15.0
-    hooks:
-      - id: django-upgrade
-        args: ['--target-version', '4.2']
-        exclude: ^(?!.*django).*$
-
   # Documentation
   - repo: https://github.com/pre-commit/pygrep-hooks
     rev: v1.10.0
