@@ -60,21 +60,23 @@ Find missing tracks in your Apple Music library and search for replacements.
 ./venv/bin/python -m mfdr scan [OPTIONS]
 ```
 - `-s, --search-dir PATH` - Directory to search for replacements
-- `-n, --dry-run` - Preview without making changes
+- `-dr, --dry-run` - Preview without making changes
 - `-l, --limit N` - Process only first N tracks
 - `-r, --resume-from TEXT` - Resume from specific track
 - `-q` - Quarantine corrupted originals after replacement
 
 ### `qscan` - Quarantine Scanner
-Scan directories and automatically quarantine corrupted files.
+Scan directories and automatically quarantine corrupted files with checkpoint support.
 
 ```bash
 ./venv/bin/python -m mfdr qscan [DIRECTORY] [OPTIONS]
 ```
-- `-n, --dry-run` - Preview what would be quarantined
+- `-dr, --dry-run` - Preview what would be quarantined
 - `-q, --quarantine-dir PATH` - Custom quarantine location
 - `-f, --fast-scan` - Quick check (file endings only)
 - `-l, --limit N` - Check only first N files
+- `-c, --checkpoint-interval N` - Save progress every N files (default: 100)
+- `--resume` - Resume from last checkpoint if scan was interrupted
 
 ### `mscan` - Library.xml Scanner
 Validate exported Library.xml files and find missing tracks.
@@ -86,7 +88,7 @@ To export Library.xml: Apple Music → File → Library → Export Library...
 ```
 - `-s, --search-dir PATH` - Search for replacements
 - `-r, --replace` - Auto-copy high-confidence matches (90+ score)
-- `-n, --dry-run` - Preview without copying
+- `-dr, --dry-run` - Preview without copying
 - `-l, --limit N` - Process only first N tracks
 
 ## What Gets Checked

@@ -5,6 +5,7 @@ Apple Music Manager - Main CLI interface with Rich UI
 
 import click
 import logging
+import json
 from typing import Optional
 from pathlib import Path
 from rich.console import Console
@@ -84,7 +85,7 @@ def cli(ctx: click.Context, verbose: bool) -> None:
 @cli.command()
 @click.option('--search-dir', '-s', type=click.Path(exists=True, path_type=Path), 
               help='Directory to search for missing tracks')
-@click.option('--dry-run', '-n', is_flag=True, help='Show what would be done without making changes')
+@click.option('--dry-run', '-dr', is_flag=True, help='Show what would be done without making changes')
 @click.option('--limit', '-l', type=int, help='Limit number of tracks to process (for testing)')
 @click.option('--log-file', type=click.Path(path_type=Path), help='Log file path')
 @click.option('--resume-from', '-r', type=str, help='Resume from specific track (format: "Artist - Track Name")')
@@ -386,14 +387,17 @@ def check(path: Path, quarantine: bool, verbose: bool) -> None:
 
 @cli.command()
 @click.argument('directory', type=click.Path(exists=True, path_type=Path))
-@click.option('--dry-run', '-n', is_flag=True, help='Show what would be quarantined without moving files')
+@click.option('--dry-run', '-dr', is_flag=True, help='Show what would be quarantined without moving files')
 @click.option('--limit', '-l', type=int, help='Limit number of files to check')
 @click.option('--recursive', '-r', is_flag=True, default=True, help='Search subdirectories recursively')
 @click.option('--quarantine-dir', '-q', type=click.Path(path_type=Path), help='Custom quarantine directory path')
 @click.option('--fast-scan', '-f', is_flag=True, help='Fast scan mode - only check file endings')
+@click.option('--checkpoint-interval', '-c', type=int, default=100, help='Save progress every N files (default: 100)')
+@click.option('--resume', is_flag=True, help='Resume from last checkpoint')
 @click.pass_context
 def qscan(ctx: click.Context, directory: Path, dry_run: bool, limit: Optional[int], 
-         recursive: bool, quarantine_dir: Optional[Path], fast_scan: bool) -> None:
+         recursive: bool, quarantine_dir: Optional[Path], fast_scan: bool,
+         checkpoint_interval: int, resume: bool) -> None:
     """Quick scan directory for corrupted files"""
     
     if quarantine_dir:
@@ -407,10 +411,15 @@ def qscan(ctx: click.Context, directory: Path, dry_run: bool, limit: Optional[in
         "Quarantine Directory": str(quarantine_path),
         "Mode": "Dry Run" if dry_run else "Live",
         "Scan Type": "Fast" if fast_scan else "Full",
-        "Recursive": "Yes" if recursive else "No"
+        "Recursive": "Yes" if recursive else "No",
+        "Checkpoint Interval": f"{checkpoint_interval} files",
+        "Resume Mode": "Yes" if resume else "No"
     }
     console.print(create_status_panel("Quick Scan Configuration", config, "info"))
     console.print()
+    
+    # Checkpoint file path
+    checkpoint_file = Path(".qscan_checkpoint.json")
     
     try:
         completeness_checker = CompletenessChecker(quarantine_path)
@@ -429,6 +438,9 @@ def qscan(ctx: click.Context, directory: Path, dry_run: bool, limit: Optional[in
                 for ext in audio_extensions:
                     audio_files.extend(directory.glob(f"*{ext}"))
             
+            # Sort files for consistent ordering
+            audio_files.sort()
+            
             if limit:
                 audio_files = audio_files[:limit]
         
@@ -438,13 +450,29 @@ def qscan(ctx: click.Context, directory: Path, dry_run: bool, limit: Optional[in
             console.print("[warning]ℹ️ No audio files found[/warning]")
             return
         
+        # Load checkpoint if resuming
+        skip_files = set()
+        if resume and checkpoint_file.exists():
+            try:
+                with open(checkpoint_file) as f:
+                    checkpoint_data = json.load(f)
+                    if checkpoint_data.get('directory') == str(directory):
+                        skip_files = set(Path(p) for p in checkpoint_data.get('processed_files', []))
+                        console.print(f"[info]📌 Resuming from checkpoint: {len(skip_files)} files already processed[/info]\n")
+                    else:
+                        console.print("[warning]⚠️ Checkpoint is for different directory, starting fresh[/warning]\n")
+            except Exception as e:
+                console.print(f"[warning]⚠️ Could not load checkpoint: {e}[/warning]\n")
+        
         # Statistics
-        checked_count = 0
+        checked_count = len(skip_files)
         corrupted_count = 0
         quarantined_count = 0
         error_count = 0
+        processed_files = list(skip_files)
         
         start_time = time.time()
+        last_checkpoint_save = 0
         
         # Process files with progress
         with Progress(
@@ -458,7 +486,14 @@ def qscan(ctx: click.Context, directory: Path, dry_run: bool, limit: Optional[in
             
             scan_task = progress.add_task("[cyan]Scanning files...", total=len(audio_files))
             
+            # Skip already processed files in progress bar
+            if skip_files:
+                progress.advance(scan_task, len(skip_files))
+            
             for file_path in audio_files:
+                # Skip if already processed
+                if file_path in skip_files:
+                    continue
                 checked_count += 1
                 
                 try:
@@ -471,8 +506,10 @@ def qscan(ctx: click.Context, directory: Path, dry_run: bool, limit: Optional[in
                     if not is_complete:
                         corrupted_count += 1
                         
-                        # Determine quarantine reason
-                        if details.get('ffmpeg_seek_error'):
+                        # Determine quarantine reason - use specific reason from checker if available
+                        if details.get('quarantine_reason'):
+                            reason = details['quarantine_reason']
+                        elif details.get('ffmpeg_seek_error'):
                             reason = "ffmpeg_seek_failure"
                         elif not details.get('has_metadata'):
                             reason = "no_metadata"
@@ -507,6 +544,29 @@ def qscan(ctx: click.Context, directory: Path, dry_run: bool, limit: Optional[in
                     error_count += 1
                     console.print(f"[error]❌ Error checking {file_path.name}: {e}[/error]")
                 
+                # Add to processed files
+                processed_files.append(file_path)
+                
+                # Save checkpoint periodically
+                if checked_count - last_checkpoint_save >= checkpoint_interval:
+                    try:
+                        checkpoint_data = {
+                            'directory': str(directory),
+                            'processed_files': [str(p) for p in processed_files],
+                            'timestamp': time.time(),
+                            'stats': {
+                                'checked': checked_count,
+                                'corrupted': corrupted_count,
+                                'quarantined': quarantined_count,
+                                'errors': error_count
+                            }
+                        }
+                        with open(checkpoint_file, 'w') as f:
+                            json.dump(checkpoint_data, f, indent=2)
+                        last_checkpoint_save = checked_count
+                    except Exception:
+                        pass  # Silently fail checkpoint save
+                
                 progress.advance(scan_task)
         
         # Final summary
@@ -532,6 +592,41 @@ def qscan(ctx: click.Context, directory: Path, dry_run: bool, limit: Optional[in
                     file_count = len(list(subdir.glob("*")))
                     console.print(f"   [info]{subdir.name}:[/info] {file_count} files")
         
+        # Clean up checkpoint file on successful completion
+        if checkpoint_file.exists():
+            try:
+                checkpoint_file.unlink()
+                console.print("\n[dim]✓ Checkpoint file removed (scan complete)[/dim]")
+            except Exception:
+                pass
+        
+    except KeyboardInterrupt:
+        # Save checkpoint on interruption
+        try:
+            checkpoint_data = {
+                'directory': str(directory),
+                'processed_files': [str(p) for p in processed_files],
+                'timestamp': time.time(),
+                'stats': {
+                    'checked': checked_count,
+                    'corrupted': corrupted_count,
+                    'quarantined': quarantined_count,
+                    'errors': error_count
+                }
+            }
+            with open(checkpoint_file, 'w') as f:
+                json.dump(checkpoint_data, f, indent=2)
+            console.print(Panel(
+                f"[warning]Scan interrupted at file {checked_count} of {len(audio_files)}[/warning]\n\n"
+                f"Progress saved to checkpoint. To resume, run:\n"
+                f"[info]mfdr qscan {directory} --resume[/info]",
+                title="⏸️  Paused",
+                style="warning"
+            ))
+        except Exception:
+            console.print("[error]Could not save checkpoint[/error]")
+        raise
+    
     except Exception as e:
         console.print(f"[error]❌ Error: {e}[/error]")
         raise click.ClickException(str(e))
@@ -541,7 +636,7 @@ def qscan(ctx: click.Context, directory: Path, dry_run: bool, limit: Optional[in
 @click.option('--search-dir', '-s', type=click.Path(exists=True, path_type=Path), 
               help='Directory to search for replacement files')
 @click.option('--replace', '-r', is_flag=True, help='Automatically copy found replacements')
-@click.option('--dry-run', '-n', is_flag=True, help='Preview without making changes')
+@click.option('--dry-run', '-dr', is_flag=True, help='Preview without making changes')
 @click.option('--limit', '-l', type=int, help='Process only first N tracks')
 @click.option('--auto-add-dir', type=click.Path(path_type=Path),
               default=Path.home() / "Music" / "iTunes" / "iTunes Media" / "Automatically Add to Music.localized",
