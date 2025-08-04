@@ -1,0 +1,72 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple Computer//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>Major Version</key><integer>1</integer>
+	<key>Minor Version</key><integer>1</integer>
+	<key>Date</key><date>2025-08-04T01:04:13Z</date>
+	<key>Application Version</key><string>1.5.6.11</string>
+	<key>Music Folder</key><string>file:///Users/test/Music/</string>
+	<key>Library Persistent ID</key><string>TEST123456789ABC</string>
+	<key>Tracks</key>
+	<dict>
+		<key>1001</key>
+		<dict>
+			<key>Track ID</key><integer>1001</integer>
+			<key>Name</key><string>Test Song 1</string>
+			<key>Artist</key><string>Test Artist</string>
+			<key>Album</key><string>Test Album</string>
+			<key>Genre</key><string>Rock</string>
+			<key>Kind</key><string>MPEG audio file</string>
+			<key>Size</key><integer>5242880</integer>
+			<key>Total Time</key><integer>180000</integer>
+			<key>Track Number</key><integer>1</integer>
+			<key>Year</key><integer>2024</integer>
+			<key>Location</key><string>file:///Users/test/Music/Test%20Artist/Test%20Album/01%20Test%20Song%201.mp3</string>
+		</dict>
+		<key>1002</key>
+		<dict>
+			<key>Track ID</key><integer>1002</integer>
+			<key>Name</key><string>Missing Track</string>
+			<key>Artist</key><string>Lost Artist</string>
+			<key>Album</key><string>Lost Album</string>
+			<key>Genre</key><string>Pop</string>
+			<key>Kind</key><string>AAC audio file</string>
+			<key>Size</key><integer>4194304</integer>
+			<key>Total Time</key><integer>210000</integer>
+			<key>Track Number</key><integer>2</integer>
+			<key>Year</key><integer>2023</integer>
+			<key>Location</key><string>file:///Users/test/Music/Lost%20Artist/Lost%20Album/02%20Missing%20Track.m4a</string>
+		</dict>
+		<key>1003</key>
+		<dict>
+			<key>Track ID</key><integer>1003</integer>
+			<key>Name</key><string>No Location Track</string>
+			<key>Artist</key><string>Cloud Artist</string>
+			<key>Album</key><string>Cloud Album</string>
+			<key>Genre</key><string>Electronic</string>
+			<key>Kind</key><string>Matched AAC audio file</string>
+			<key>Size</key><integer>3145728</integer>
+			<key>Total Time</key><integer>150000</integer>
+			<key>Track Number</key><integer>3</integer>
+			<key>Year</key><integer>2025</integer>
+		</dict>
+	</dict>
+	<key>Playlists</key>
+	<array>
+		<dict>
+			<key>Name</key><string>Test Playlist</string>
+			<key>Playlist ID</key><integer>2001</integer>
+			<key>Playlist Items</key>
+			<array>
+				<dict>
+					<key>Track ID</key><integer>1001</integer>
+				</dict>
+				<dict>
+					<key>Track ID</key><integer>1002</integer>
+				</dict>
+			</array>
+		</dict>
+	</array>
+</dict>
+</plist>
