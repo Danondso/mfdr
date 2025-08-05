@@ -146,8 +146,8 @@ class TestXMLScan:
                         
                         # Setup track matcher
                         mock_matcher = MagicMock()
-                        # Fix: return both candidate and score as tuple
-                        mock_matcher.get_candidates_with_scores.return_value = [(mock_candidate, 95)]
+                        # Fix: return candidate, score, and details as tuple
+                        mock_matcher.get_match_candidates_with_scores.return_value = [(mock_candidate, 95, {'components': {}})]
                         mock_matcher_cls.return_value = mock_matcher
                         
                         result = runner.invoke(cli, [
