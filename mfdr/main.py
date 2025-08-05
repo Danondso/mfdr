@@ -85,54 +85,107 @@ def cli(verbose: bool):
     console.print(Rule("🎵 Apple Music Library Manager", style="bold cyan"))
 
 @cli.command()
-@click.argument('xml_path', type=click.Path(exists=True, path_type=Path))
-@click.option('--missing-only', '-m', is_flag=True, 
-              help='Only check for missing tracks (skip corruption check)')
-@click.option('--replace', '-r', is_flag=True, 
-              help='Automatically copy found tracks to auto-add folder')
-@click.option('--search-dir', '-s', type=click.Path(exists=True, path_type=Path),
-              help='Directory to search for replacements')
+@click.argument('path', type=click.Path(exists=True, path_type=Path))
+@click.option('--mode', '-m', type=click.Choice(['auto', 'xml', 'dir']), default='auto',
+              help='Scan mode: auto (detect from input), xml (Library.xml), or dir (directory)')
+# Common options for both modes
 @click.option('--quarantine', '-q', is_flag=True, 
               help='Quarantine corrupted files')
-@click.option('--checkpoint', is_flag=True, 
-              help='Enable checkpoint/resume for large scans')
 @click.option('--fast', '-f', is_flag=True, 
               help='Fast scan mode (basic checks only)')
 @click.option('--dry-run', '-dr', is_flag=True, 
               help='Preview changes without making them')
 @click.option('--limit', '-l', type=int, 
-              help='Limit number of tracks to process')
-@click.option('--auto-add-dir', type=click.Path(path_type=Path),
-              help='Override auto-add directory (auto-detected by default)')
+              help='Limit number of files/tracks to process')
+@click.option('--checkpoint', is_flag=True, 
+              help='Enable checkpoint/resume for large scans')
 @click.option('--verbose', '-v', is_flag=True,
-              help='Show detailed match information')
+              help='Show detailed information')
+# XML mode specific options
+@click.option('--missing-only', is_flag=True, 
+              help='[XML mode] Only check for missing tracks (skip corruption check)')
+@click.option('--replace', '-r', is_flag=True, 
+              help='[XML mode] Automatically copy found tracks to auto-add folder')
+@click.option('--search-dir', '-s', type=click.Path(exists=True, path_type=Path),
+              help='[XML mode] Directory to search for replacements')
+@click.option('--auto-add-dir', type=click.Path(path_type=Path),
+              help='[XML mode] Override auto-add directory (auto-detected by default)')
 @click.option('--playlist', '-p', type=click.Path(path_type=Path),
-              help='Create M3U playlist of missing tracks')
-def scan(xml_path: Path, missing_only: bool, replace: bool,
-         search_dir: Optional[Path], quarantine: bool, checkpoint: bool,
-         fast: bool, dry_run: bool, limit: Optional[int], auto_add_dir: Optional[Path],
-         verbose: bool, playlist: Optional[Path]) -> None:
-    """Scan Library.xml for missing and corrupted tracks
+              help='[XML mode] Create M3U playlist of missing tracks')
+# Directory mode specific options  
+@click.option('--recursive', is_flag=True, default=True,
+              help='[Dir mode] Search subdirectories recursively')
+@click.option('--quarantine-dir', type=click.Path(path_type=Path),
+              help='[Dir mode] Custom quarantine directory path')
+@click.option('--checkpoint-interval', type=int, default=100,
+              help='[Dir mode] Save progress every N files (default: 100)')
+@click.option('--resume', is_flag=True,
+              help='[Dir mode] Resume from last checkpoint')
+def scan(path: Path, mode: str, quarantine: bool, fast: bool, dry_run: bool,
+         limit: Optional[int], checkpoint: bool, verbose: bool,
+         missing_only: bool, replace: bool, search_dir: Optional[Path], 
+         auto_add_dir: Optional[Path], playlist: Optional[Path],
+         recursive: bool, quarantine_dir: Optional[Path], 
+         checkpoint_interval: int, resume: bool) -> None:
+    """Scan for missing and corrupted tracks in Library.xml or directories
     
     Examples:
     
-        # Check for missing and corrupted tracks
+        # XML Mode - Check for missing and corrupted tracks
         mfdr scan Library.xml
+        mfdr scan --mode=xml Library.xml
         
-        # Only check for missing tracks (faster)
+        # XML Mode - Only check for missing tracks (faster)
         mfdr scan Library.xml --missing-only
         
-        # Find and auto-copy replacements for missing tracks
+        # XML Mode - Find and auto-copy replacements for missing tracks
         mfdr scan Library.xml --missing-only --replace -s /Volumes/Backup
         
-        # Full scan with corruption check and quarantine
-        mfdr scan Library.xml --quarantine -s /Volumes/Backup
+        # Directory Mode - Scan folder for corrupted files
+        mfdr scan /path/to/music --quarantine
+        mfdr scan --mode=dir /path/to/music --fast
+        
+        # Directory Mode - Resume interrupted scan
+        mfdr scan /path/to/music --resume
     """
+    
+    # Auto-detect mode if needed
+    if mode == 'auto':
+        if path.suffix.lower() == '.xml':
+            mode = 'xml'
+        elif path.is_dir():
+            mode = 'dir'
+        else:
+            console.print("[error]❌ Cannot auto-detect mode. Please specify --mode=xml or --mode=dir[/error]")
+            return
+    
+    # Validate mode-specific options
+    if mode == 'dir':
+        if any([missing_only, replace, search_dir, auto_add_dir, playlist]):
+            console.print("[warning]⚠️  XML-specific options ignored in directory mode[/warning]")
+    elif mode == 'xml':
+        if any([recursive, quarantine_dir, checkpoint_interval, resume]):
+            console.print("[warning]⚠️  Directory-specific options ignored in XML mode[/warning]")
+    
+    # Route to appropriate handler
+    if mode == 'xml':
+        _scan_xml(path, missing_only, replace, search_dir, quarantine, checkpoint,
+                  fast, dry_run, limit, auto_add_dir, verbose, playlist)
+    else:
+        _scan_directory(path, dry_run, limit, recursive, quarantine_dir, fast,
+                       checkpoint_interval, resume, quarantine)
+
+def _scan_xml(xml_path: Path, missing_only: bool, replace: bool,
+              search_dir: Optional[Path], quarantine: bool, checkpoint: bool,
+              fast: bool, dry_run: bool, limit: Optional[int], auto_add_dir: Optional[Path],
+              verbose: bool, playlist: Optional[Path]) -> None:
+    """Handle XML mode scanning"""
     
     # Display configuration
     config = {
+        "Mode": "XML Library Scan",
         "XML File": str(xml_path),
-        "Mode": "Missing only" if missing_only else "Full scan (missing + corruption)",
+        "Scan Type": "Missing only" if missing_only else "Full scan (missing + corruption)",
         "Search Directory": str(search_dir) if search_dir else "Not specified",
         "Replace": "Yes" if replace else "No",
         "Quarantine": "Yes" if quarantine else "No",
@@ -390,45 +443,34 @@ def scan(xml_path: Path, missing_only: bool, replace: bool,
         console.print(f"[error]❌ Error: {e}[/error]")
         raise click.ClickException(str(e))
 
-@cli.command()
-@click.argument('directory', type=click.Path(exists=True, path_type=Path))
-@click.option('--dry-run', '-dr', is_flag=True, help='Show what would be quarantined without moving files')
-@click.option('--limit', '-l', type=int, help='Limit number of files to check')
-@click.option('--recursive', '-r', is_flag=True, default=True, help='Search subdirectories recursively')
-@click.option('--quarantine-dir', '-q', type=click.Path(path_type=Path), help='Custom quarantine directory path')
-@click.option('--fast-scan', '-f', is_flag=True, help='Fast scan mode - only check file endings')
-@click.option('--checkpoint-interval', '-c', type=int, default=100, help='Save progress every N files (default: 100)')
-@click.option('--resume', is_flag=True, help='Resume from last checkpoint')
-def qscan(directory: Path, dry_run: bool, limit: Optional[int], 
-         recursive: bool, quarantine_dir: Optional[Path], fast_scan: bool,
-         checkpoint_interval: int, resume: bool) -> None:
-    """Quick scan directory for corrupted audio files with checkpointing
-    
-    Scans a directory for corrupted audio files and optionally quarantines them.
-    Supports checkpointing for resuming large scans.
-    """
+def _scan_directory(directory: Path, dry_run: bool, limit: Optional[int], 
+                   recursive: bool, quarantine_dir: Optional[Path], fast_scan: bool,
+                   checkpoint_interval: int, resume: bool, quarantine: bool) -> None:
+    """Handle directory mode scanning (formerly qscan)"""
     
     # Display configuration
     config = {
+        "Mode": "Directory Scan",
         "Directory": str(directory),
-        "Mode": "Dry Run" if dry_run else "Live",
         "Scan Type": "Fast (end check only)" if fast_scan else "Full validation",
         "Recursive": "Yes" if recursive else "No",
         "File Limit": str(limit) if limit else "None",
-        "Checkpoint Interval": f"Every {checkpoint_interval} files"
+        "Checkpoint Interval": f"Every {checkpoint_interval} files",
+        "Quarantine": "Yes" if quarantine else "No",
+        "Dry Run": "Yes" if dry_run else "No"
     }
     
     if quarantine_dir:
         config["Quarantine Directory"] = str(quarantine_dir)
     
-    console.print(create_status_panel("Quick Scan Configuration", config, "cyan"))
+    console.print(create_status_panel("Scan Configuration", config, "cyan"))
     console.print()
     
     # Initialize checker
     checker = CompletenessChecker(quarantine_dir=quarantine_dir)
     
     # Checkpoint file path
-    checkpoint_file = directory / ".qscan_checkpoint.json"
+    checkpoint_file = directory / ".scan_checkpoint.json"
     processed_files = set()
     stats = {
         "total_checked": 0,
@@ -517,7 +559,7 @@ def qscan(directory: Path, dry_run: bool, limit: Optional[int],
                         corrupted_files.append((file_path, details))
                         
                         # Quarantine if requested
-                        if not dry_run:
+                        if quarantine and not dry_run:
                             try:
                                 reason = details.get('reason', 'corrupted')
                                 new_path = checker.quarantine_file(file_path, reason)
@@ -526,7 +568,7 @@ def qscan(directory: Path, dry_run: bool, limit: Optional[int],
                             except Exception as e:
                                 stats["errors"] += 1
                                 progress.console.print(f"[red]❌ Failed to quarantine {file_path.name}: {e}[/red]")
-                        else:
+                        elif quarantine and dry_run:
                             progress.console.print(f"[yellow]⚠️  Would quarantine: {file_path.name}[/yellow]")
                     
                 except Exception as e:
@@ -595,6 +637,14 @@ def sync(xml_path: Path, library_root: Optional[Path],
     # Parse XML
     parser = LibraryXMLParser(xml_path)
     
+    # Parse tracks first to populate music_folder
+    with console.status("[cyan]Loading tracks from XML...", spinner="dots"):
+        tracks = parser.parse()
+        if limit:
+            tracks = tracks[:limit]
+    
+    console.print(f"[success]✅ Loaded {len(tracks)} tracks[/success]\n")
+    
     # Auto-detect library root if not provided
     if not library_root:
         library_root = parser.music_folder
@@ -622,14 +672,6 @@ def sync(xml_path: Path, library_root: Optional[Path],
         return
     
     console.print()
-    
-    # Parse tracks
-    with console.status("[cyan]Loading tracks from XML...", spinner="dots"):
-        tracks = parser.parse()
-        if limit:
-            tracks = tracks[:limit]
-    
-    console.print(f"[success]✅ Loaded {len(tracks)} tracks[/success]\n")
     
     # Find tracks outside library
     outside_tracks = []

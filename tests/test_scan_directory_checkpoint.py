@@ -1,4 +1,4 @@
-"""Tests for qscan checkpoint functionality"""
+"""Tests for scan directory mode checkpoint functionality"""
 
 import json
 import pytest
@@ -8,8 +8,8 @@ from click.testing import CliRunner
 from mfdr.main import cli
 
 
-class TestQscanCheckpoint:
-    """Test checkpoint functionality in qscan command"""
+class TestScanDirectoryCheckpoint:
+    """Test checkpoint functionality in scan directory mode"""
     
     @pytest.fixture
     def runner(self):
@@ -47,7 +47,7 @@ class TestQscanCheckpoint:
         
         with patch('mfdr.main.json.dump', side_effect=mock_json_dump):
             with patch('builtins.open', mock_open()) as mock_file:
-                result = runner.invoke(cli, ['qscan', str(temp_music_dir), '-c', '2'])
+                result = runner.invoke(cli, ['scan', '--mode=dir', str(temp_music_dir), '--checkpoint-interval', '2'])
                 
                 # Should save checkpoint after processing 2 files
                 assert result.exit_code == 0
@@ -73,12 +73,12 @@ class TestQscanCheckpoint:
             }
         }
         
-        checkpoint_file = Path('.qscan_checkpoint.json')
+        checkpoint_file = Path('.scan_checkpoint.json')
         
         with patch('pathlib.Path.exists') as mock_exists:
             mock_exists.return_value = True
             with patch('builtins.open', mock_open(read_data=json.dumps(checkpoint_data))):
-                result = runner.invoke(cli, ['qscan', str(temp_music_dir), '--resume'])
+                result = runner.invoke(cli, ['scan', '--mode=dir', str(temp_music_dir), '--resume'])
                 
                 assert result.exit_code == 0
                 assert 'Resumed from checkpoint: 2 files already processed' in result.output
@@ -95,13 +95,13 @@ class TestQscanCheckpoint:
             'stats': {'total_checked': 1, 'corrupted': 0, 'quarantined': 0, 'errors': 0}
         }
         
-        checkpoint_file = temp_music_dir / '.qscan_checkpoint.json'
+        checkpoint_file = temp_music_dir / '.scan_checkpoint.json'
         
         with patch('pathlib.Path.exists') as mock_exists:
             mock_exists.return_value = True
             
             with patch('builtins.open', mock_open(read_data=json.dumps(checkpoint_data))):
-                result = runner.invoke(cli, ['qscan', str(temp_music_dir), '--resume'])
+                result = runner.invoke(cli, ['scan', '--mode=dir', str(temp_music_dir), '--resume'])
                 
                 assert result.exit_code == 0
                 assert 'Resumed from checkpoint: 1 files already processed' in result.output
@@ -112,7 +112,7 @@ class TestQscanCheckpoint:
     def test_checkpoint_cleanup_on_completion(self, runner, mock_checker, temp_music_dir):
         """Test that checkpoint file is removed on successful completion"""
         # Create a fake checkpoint file
-        checkpoint_file = temp_music_dir.parent / '.qscan_checkpoint.json'
+        checkpoint_file = temp_music_dir.parent / '.scan_checkpoint.json'
         checkpoint_file.write_text('{}')
         
         with runner.isolated_filesystem():
@@ -121,7 +121,7 @@ class TestQscanCheckpoint:
                 Path(f'song{i}.mp3').touch()
             
             # Run the command
-            result = runner.invoke(cli, ['qscan', '.'])
+            result = runner.invoke(cli, ['scan', '--mode=dir', '.'])
             
             assert result.exit_code == 0
             # The output should show completion
@@ -148,7 +148,7 @@ class TestQscanCheckpoint:
             
             with patch('mfdr.main.json.dump', side_effect=mock_json_dump):
                 with patch('builtins.open', mock_open()) as mock_file:
-                    result = runner.invoke(cli, ['qscan', str(temp_music_dir)])
+                    result = runner.invoke(cli, ['scan', '--mode=dir', str(temp_music_dir)])
                     
                     # KeyboardInterrupt should be caught gracefully and checkpoint saved
                     assert result.exit_code == 0  # Graceful exit
@@ -174,7 +174,7 @@ class TestQscanCheckpoint:
         
         with patch('mfdr.main.json.dump', side_effect=mock_json_dump):
             with patch('builtins.open', mock_open()) as mock_file:
-                result = runner.invoke(cli, ['qscan', str(temp_music_dir), '-c', '3'])
+                result = runner.invoke(cli, ['scan', '--mode=dir', str(temp_music_dir), '--checkpoint-interval', '3'])
                 
                 assert result.exit_code == 0
                 # Check that stats in checkpoint include corrupted count
@@ -195,7 +195,7 @@ class TestQscanCheckpoint:
         with patch('mfdr.main.json.dump', side_effect=mock_json_dump):
             with patch('builtins.open', mock_open()) as mock_file:
                 # Set checkpoint interval to 5
-                result = runner.invoke(cli, ['qscan', str(temp_music_dir), '-c', '5'])
+                result = runner.invoke(cli, ['scan', '--mode=dir', str(temp_music_dir), '--checkpoint-interval', '5'])
                 
                 assert result.exit_code == 0
                 # With 15 files and interval of 5, should save 3 times during processing + 1 final save = 4
@@ -212,7 +212,7 @@ class TestQscanCheckpoint:
         with patch('pathlib.Path.exists') as mock_exists:
             mock_exists.return_value = True
             with patch('builtins.open', mock_open(read_data=json.dumps(checkpoint_data))):
-                result = runner.invoke(cli, ['qscan', str(temp_music_dir), '--resume', '--dry-run'])
+                result = runner.invoke(cli, ['scan', '--mode=dir', str(temp_music_dir), '--resume', '--dry-run'])
                 
                 assert result.exit_code == 0
                 assert 'Resumed from checkpoint' in result.output
@@ -231,7 +231,7 @@ class TestQscanCheckpoint:
         
         with patch('mfdr.main.json.dump', side_effect=mock_json_dump):
             with patch('builtins.open', mock_open()) as mock_file:
-                result = runner.invoke(cli, ['qscan', str(temp_music_dir), '--fast-scan', '-c', '2'])
+                result = runner.invoke(cli, ['scan', '--mode=dir', str(temp_music_dir), '--fast', '--checkpoint-interval', '2'])
                 
                 assert result.exit_code == 0
                 # Should use fast_corruption_check instead of check_file
