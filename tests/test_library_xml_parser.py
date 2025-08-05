@@ -195,38 +195,6 @@ class TestLibraryXMLParser:
         assert validation['missing'][0].name == "Missing Track"
         assert validation['no_location'][0].name == "No Location Track"
     
-    def test_find_replacements(self, parser):
-        """Test finding replacement files for missing tracks"""
-        # Use patch within the test
-        with patch('mfdr.file_manager.FileManager') as mock_fm_class, \
-             patch('mfdr.track_matcher.TrackMatcher') as mock_matcher_class:
-            
-            # Parse tracks
-            tracks = parser.parse()
-            missing_tracks = [tracks[1]]  # "Missing Track"
-            
-            # Mock FileManager
-            mock_fm = MagicMock()
-            mock_fm_class.return_value = mock_fm
-            
-            # Mock file candidates
-            mock_candidate = MagicMock()
-            mock_candidate.path = Path("/found/Missing Track.m4a")
-            mock_fm.search_files.return_value = [mock_candidate]
-            
-            # Mock TrackMatcher
-            mock_matcher = MagicMock()
-            mock_matcher_class.return_value = mock_matcher
-            # is_auto_replace_candidate returns (is_suitable, score, details)
-            mock_matcher.is_auto_replace_candidate.return_value = (True, 95, {'artist_match': True})
-            
-            # Find replacements
-            search_dir = Path("/Users/test/Music")
-            replacements = parser.find_replacements(missing_tracks, search_dir)
-            
-            assert len(replacements) == 1
-            assert missing_tracks[0] in replacements
-            assert replacements[missing_tracks[0]][0] == (Path("/found/Missing Track.m4a"), 95)
     
     def test_get_value_types(self, parser):
         """Test _get_value handles different XML value types"""

@@ -349,7 +349,6 @@ class CompletenessChecker:
         
         try:
             shutil.move(str(file_path), str(dest_file))
-            logger.info(f"Quarantined {file_path.name} to {dest_dir.name}/ (reason: {reason})")
             return True
         except Exception as e:
             logger.error(f"Failed to quarantine {file_path}: {e}")

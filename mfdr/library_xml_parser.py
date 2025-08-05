@@ -4,7 +4,7 @@ Parser for Apple Music/iTunes Library.xml files
 
 import xml.etree.ElementTree as ET
 from pathlib import Path
-from typing import List, Dict, Optional, Tuple
+from typing import List, Dict, Optional
 from dataclasses import dataclass
 from urllib.parse import unquote, urlparse
 import logging
@@ -68,6 +68,7 @@ class LibraryXMLParser:
         self.xml_path = xml_path
         self.tracks: List[LibraryTrack] = []
         self.playlists: List[Dict] = []
+        self.music_folder: Optional[Path] = None
         
     def parse(self) -> List[LibraryTrack]:
         """Parse the Library.xml file and return list of tracks"""
@@ -85,6 +86,9 @@ class LibraryXMLParser:
             if main_dict is None:
                 raise ValueError("Invalid Library.xml format: no main dict found")
             
+            # Extract Music Folder location
+            self.music_folder = self._find_music_folder(main_dict)
+            
             # Find the Tracks dict
             tracks_dict = self._find_tracks_dict(main_dict)
             if tracks_dict is None:
@@ -98,6 +102,27 @@ class LibraryXMLParser:
             
         except ET.ParseError as e:
             raise ValueError(f"Failed to parse XML: {e}")
+    
+    def _find_music_folder(self, main_dict) -> Optional[Path]:
+        """Find the Music Folder path from the main dict"""
+        found_music_folder_key = False
+        for child in main_dict:
+            if found_music_folder_key and child.tag == 'string':
+                # Parse the file URL to get the path
+                try:
+                    parsed = urlparse(child.text)
+                    if parsed.scheme == 'file':
+                        path_str = unquote(parsed.path)
+                        # Handle Windows paths
+                        if path_str.startswith('/') and len(path_str) > 2 and path_str[2] == ':':
+                            path_str = path_str[1:]
+                        return Path(path_str)
+                except Exception as e:
+                    logger.warning(f"Failed to parse Music Folder: {e}")
+                return None
+            if child.tag == 'key' and child.text == 'Music Folder':
+                found_music_folder_key = True
+        return None
     
     def _find_tracks_dict(self, main_dict) -> Optional[ET.Element]:
         """Find the Tracks dictionary in the main dict"""
@@ -211,49 +236,3 @@ class LibraryXMLParser:
         
         return result
     
-    def find_replacements(self, missing_tracks: List[LibraryTrack], 
-                         search_dir: Path) -> Dict[LibraryTrack, List[Tuple[Path, int]]]:
-        """
-        Find potential replacement files for missing tracks
-        Uses the existing FileManager and TrackMatcher
-        
-        Returns dict mapping tracks to list of (file_path, score) tuples
-        """
-        from .file_manager import FileManager
-        from .track_matcher import TrackMatcher
-        from .apple_music import Track
-        
-        file_manager = FileManager(search_dir)
-        file_manager.index_files()
-        track_matcher = TrackMatcher()
-        
-        replacements = {}
-        
-        for lib_track in missing_tracks:
-            # Convert LibraryTrack to Track for compatibility
-            track = Track(
-                name=lib_track.name,
-                artist=lib_track.artist,
-                album=lib_track.album,
-                size=lib_track.size,
-                duration=lib_track.duration_seconds,
-                year=lib_track.year,
-                track_number=lib_track.track_number,
-                location=None  # None since it's missing
-            )
-            
-            # Search for candidates
-            candidates = file_manager.search_files(track)
-            if candidates:
-                # Score each candidate using the is_auto_replace_candidate method
-                scored = []
-                for candidate in candidates:
-                    is_suitable, score, details = track_matcher.is_auto_replace_candidate(track, candidate)
-                    scored.append((candidate.path, score))
-                
-                # Sort by score descending
-                scored.sort(key=lambda x: x[1], reverse=True)
-                if scored:
-                    replacements[lib_track] = scored
-        
-        return replacements

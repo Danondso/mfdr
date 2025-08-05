@@ -4,7 +4,7 @@ from pathlib import Path
 from unittest.mock import Mock, MagicMock, patch
 import subprocess
 from mfdr.completeness_checker import CompletenessChecker
-from mfdr.apple_music import Track
+from mfdr.library_xml_parser import LibraryTrack
 
 
 class TestCompletenessCheckerCore:
