@@ -4,35 +4,11 @@ Tests for the sync command
 
 import pytest
 from pathlib import Path
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 from click.testing import CliRunner
 import tempfile
 
 from mfdr.main import cli
-from mfdr.library_xml_parser import LibraryTrack
-
-
-def get_test_xml_content():
-    """Get valid XML content for testing"""
-    return '''<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0">
-<dict>
-    <key>Music Folder</key>
-    <string>file:///Users/test/Music/Music/Media/</string>
-    <key>Tracks</key>
-    <dict>
-        <key>1</key>
-        <dict>
-            <key>Track ID</key><integer>1</integer>
-            <key>Name</key><string>Test Song</string>
-            <key>Artist</key><string>Test Artist</string>
-            <key>Album</key><string>Test Album</string>
-            <key>Location</key><string>file:///Users/test/Music/Music/Media/Test.m4a</string>
-        </dict>
-    </dict>
-</dict>
-</plist>'''
 
 
 class TestSyncCommand:
@@ -43,312 +19,427 @@ class TestSyncCommand:
         """Create a Click test runner"""
         return CliRunner()
     
-    @pytest.fixture
-    def temp_xml_file(self):
-        """Create a temporary XML file"""
-        with tempfile.NamedTemporaryFile(mode='w', suffix='.xml', delete=False) as f:
-            f.write(get_test_xml_content())
-            temp_path = f.name
-        yield temp_path
-        # Cleanup
-        Path(temp_path).unlink(missing_ok=True)
     
-    @pytest.fixture
-    def mock_library_tracks(self):
-        """Create mock library tracks for testing"""
-        return [
-            LibraryTrack(
-                track_id=1,
-                name="Song 1",
-                artist="Artist 1",
-                album="Album 1",
-                location="file:///Users/test/Music/Music/Media/Artist1/Song1.mp3",
-                size=1000000
-            ),
-            LibraryTrack(
-                track_id=2,
-                name="Song 2",
-                artist="Artist 2",
-                album="Album 2",
-                location="file:///Users/test/External/Music/Song2.mp3",
-                size=2000000
-            ),
-            LibraryTrack(
-                track_id=3,
-                name="Song 3",
-                artist="Artist 3",
-                album="Album 3",
-                location=None,  # Cloud track
-                size=None
-            ),
-            LibraryTrack(
-                track_id=4,
-                name="Song 4",
-                artist="Artist 4",
-                album="Album 4",
-                location="file:///Users/test/Downloads/Song4.m4a",
-                size=3000000
-            )
-        ]
-    
-    @patch('mfdr.main.LibraryXMLParser')
-    def test_sync_dry_run(self, mock_parser_class, runner, mock_library_tracks):
+    def test_sync_dry_run(self, runner):
         """Test sync command in dry-run mode"""
-        # Create a temporary XML file for Click validation
-        with tempfile.NamedTemporaryFile(mode='w', suffix='.xml', delete=False) as f:
-            f.write(get_test_xml_content())
-            temp_xml_path = f.name
-        
-        try:
-            # Setup mocks
-            mock_parser = MagicMock()
-            mock_parser_class.return_value = mock_parser
-            mock_parser.parse.return_value = mock_library_tracks
-            mock_parser.music_folder = Path('/Users/test/Music/Music/Media')
+        # Create temp directories
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp_path = Path(temp_dir)
+            library_root = temp_path / "Music" / "Media"
+            library_root.mkdir(parents=True)
+            auto_add_dir = library_root / "Automatically Add to Music.localized"
+            auto_add_dir.mkdir()
             
-            # Mock file paths
-            with patch('pathlib.Path.exists') as mock_exists:
-                mock_exists.return_value = True
-                
+            # Create a more complete XML with tracks outside library
+            xml_content = f'''<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Music Folder</key>
+    <string>file://{library_root}/</string>
+    <key>Tracks</key>
+    <dict>
+        <key>1</key>
+        <dict>
+            <key>Track ID</key><integer>1</integer>
+            <key>Name</key><string>Inside Track</string>
+            <key>Artist</key><string>Test Artist</string>
+            <key>Album</key><string>Test Album</string>
+            <key>Location</key><string>file://{library_root}/Test.m4a</string>
+            <key>Size</key><integer>5000000</integer>
+        </dict>
+        <key>2</key>
+        <dict>
+            <key>Track ID</key><integer>2</integer>
+            <key>Name</key><string>Outside Track</string>
+            <key>Artist</key><string>External Artist</string>
+            <key>Album</key><string>External Album</string>
+            <key>Location</key><string>file://{temp_path}/Downloads/External.mp3</string>
+            <key>Size</key><integer>3000000</integer>
+        </dict>
+    </dict>
+</dict>
+</plist>'''
+            
+            with tempfile.NamedTemporaryFile(mode='w', suffix='.xml', delete=False) as f:
+                f.write(xml_content)
+                temp_xml_path = f.name
+            
+            try:
                 # Run command
                 result = runner.invoke(cli, [
                     'sync', 
                     temp_xml_path,
-                    '--dry-run',
-                    '--library-root', '/Users/test/Music/Music/Media'
+                    '--dry-run'
                 ])
                 
                 # Check output
                 if result.exit_code != 0:
                     print(f"Command failed with output:\n{result.output}")
+                    if result.exception:
+                        print(f"Exception: {result.exception}")
                 assert result.exit_code == 0
                 assert 'Library Sync' in result.output
-                # Check for either dry run output OR all tracks already in library
-                assert ('Would copy' in result.output or 
-                        'All tracks are already within the library folder' in result.output or
-                        'tracks outside library' in result.output)
-        finally:
-            # Clean up
-            Path(temp_xml_path).unlink(missing_ok=True)
+                # Should find the external track
+                assert ('Found 1 tracks outside library' in result.output or
+                        'Would copy' in result.output or
+                        'All tracks are already within the library folder' in result.output)
+            finally:
+                Path(temp_xml_path).unlink(missing_ok=True)
     
-    @patch('mfdr.main.LibraryXMLParser')
-    @patch('shutil.copy2')
-    def test_sync_copy_files(self, mock_copy, mock_parser_class, runner, mock_library_tracks):
+    def test_sync_copy_files(self, runner):
         """Test sync command actually copying files"""
-        # Create a temporary XML file
-        with tempfile.NamedTemporaryFile(mode='w', suffix='.xml', delete=False) as f:
-            f.write(get_test_xml_content())
-            temp_xml_path = f.name
-        
-        try:
-            # Setup mocks
-            mock_parser = MagicMock()
-            mock_parser_class.return_value = mock_parser
-            mock_parser.parse.return_value = mock_library_tracks
-            mock_parser.music_folder = Path('/Users/test/Music/Music/Media')
+        # Create temp directories
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp_path = Path(temp_dir)
+            library_root = temp_path / "Music" / "Media"
+            library_root.mkdir(parents=True)
+            auto_add_dir = library_root / "Automatically Add to Music.localized"
+            auto_add_dir.mkdir()
             
-            # Mock file paths
-            with patch('pathlib.Path.exists') as mock_exists:
-                mock_exists.return_value = True
-                
-                with patch('pathlib.Path.mkdir'):
-                    # Run command without dry-run
-                    result = runner.invoke(cli, [
-                        'sync',
-                        temp_xml_path,
-                        '--library-root', '/Users/test/Music/Music/Media',
-                        '--auto-add-dir', '/tmp/AutoAdd'
-                    ])
-                    
-                    # Check command ran successfully
-                    if result.exit_code != 0:
-                        print(f"Command failed with output:\n{result.output}")
-                    assert result.exit_code == 0
-                    # Files should be detected as outside library but might already exist
-                    # So check for either copied or skipped messages
-                    assert ('Copied' in result.output or 'Files Copied' in result.output or 
-                            'already in auto-add folder' in result.output or
-                            'Outside library' in result.output or 'Outside Library' in result.output or
-                            'tracks outside library' in result.output or
-                            # Or all tracks might be inside library already
-                            'All tracks are already within the library folder' in result.output)
-        finally:
-            Path(temp_xml_path).unlink(missing_ok=True)
-    
-    @patch('mfdr.main.LibraryXMLParser')
-    def test_sync_with_limit(self, mock_parser_class, runner, mock_library_tracks):
-        """Test sync command with track limit"""
-        # Setup mocks before creating temp file
-        mock_parser = MagicMock()
-        mock_parser_class.return_value = mock_parser
-        # Return all 4 tracks from mock, the --limit flag will restrict to 2
-        mock_parser.parse.return_value = mock_library_tracks
-        mock_parser.music_folder = Path('/Users/test/Music/Music/Media')
-        
-        with tempfile.NamedTemporaryFile(mode='w', suffix='.xml', delete=False) as f:
-            f.write(get_test_xml_content())
-            temp_xml_path = f.name
-        
-        try:
-            # Mock auto-add directory exists
-            with patch('pathlib.Path.exists', return_value=True):
-                # Run command with limit
+            # Create external file
+            external_dir = temp_path / "Downloads"
+            external_dir.mkdir()
+            external_file = external_dir / "External.mp3"
+            external_file.write_text("fake mp3 content")
+            
+            # Create XML with external track
+            xml_content = f'''<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Music Folder</key>
+    <string>file://{library_root}/</string>
+    <key>Tracks</key>
+    <dict>
+        <key>1</key>
+        <dict>
+            <key>Track ID</key><integer>1</integer>
+            <key>Name</key><string>External Track</string>
+            <key>Artist</key><string>External Artist</string>
+            <key>Album</key><string>External Album</string>
+            <key>Location</key><string>file://{external_file}</string>
+            <key>Size</key><integer>1000</integer>
+        </dict>
+    </dict>
+</dict>
+</plist>'''
+            
+            with tempfile.NamedTemporaryFile(mode='w', suffix='.xml', delete=False) as f:
+                f.write(xml_content)
+                temp_xml_path = f.name
+            
+            try:
+                # Run sync without dry-run
                 result = runner.invoke(cli, [
                     'sync',
                     temp_xml_path,
-                    '--dry-run',
-                    '--limit', '2',
-                    '--auto-add-dir', '/tmp/AutoAdd'
+                    '--auto-add-dir', str(auto_add_dir)
                 ])
-            
-                # Check output
+                
+                # Check results
                 assert result.exit_code == 0
-                # The test XML has 1 track, and we specified --limit 2
-                # So it should load 1 track (the minimum of actual tracks and limit)
-                assert 'Loaded 1 tracks' in result.output
-        finally:
-            Path(temp_xml_path).unlink(missing_ok=True)
+                assert 'Found 1 tracks outside library' in result.output
+                assert 'Copied: External.mp3' in result.output
+                
+                # Verify file was copied
+                copied_file = auto_add_dir / "External.mp3"
+                assert copied_file.exists()
+                assert copied_file.read_text() == "fake mp3 content"
+            finally:
+                Path(temp_xml_path).unlink(missing_ok=True)
     
-    @patch('mfdr.main.LibraryXMLParser')
-    def test_sync_no_external_files(self, mock_parser_class, runner, temp_xml_file):
-        """Test sync when all files are inside library"""
-        # Create tracks all inside library
-        internal_tracks = [
-            LibraryTrack(
-                track_id=1,
-                name="Song 1",
-                artist="Artist 1",
-                album="Album 1",
-                location="file:///Users/test/Music/Music/Media/Artist1/Song1.mp3",
-                size=1000000
-            ),
-            LibraryTrack(
-                track_id=2,
-                name="Song 2",
-                artist="Artist 2",
-                album="Album 2",
-                location="file:///Users/test/Music/Music/Media/Artist2/Song2.mp3",
-                size=2000000
-            )
-        ]
+    def test_sync_with_limit(self, runner):
+        """Test sync command with track limit"""
+        # Create XML with multiple tracks
+        xml_content = '''<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Music Folder</key>
+    <string>file:///Users/test/Music/Music/Media/</string>
+    <key>Tracks</key>
+    <dict>
+        <key>1</key>
+        <dict>
+            <key>Track ID</key><integer>1</integer>
+            <key>Name</key><string>Track 1</string>
+            <key>Artist</key><string>Artist 1</string>
+            <key>Location</key><string>file:///Users/test/Downloads/Track1.mp3</string>
+        </dict>
+        <key>2</key>
+        <dict>
+            <key>Track ID</key><integer>2</integer>
+            <key>Name</key><string>Track 2</string>
+            <key>Artist</key><string>Artist 2</string>
+            <key>Location</key><string>file:///Users/test/Downloads/Track2.mp3</string>
+        </dict>
+        <key>3</key>
+        <dict>
+            <key>Track ID</key><integer>3</integer>
+            <key>Name</key><string>Track 3</string>
+            <key>Artist</key><string>Artist 3</string>
+            <key>Location</key><string>file:///Users/test/Downloads/Track3.mp3</string>
+        </dict>
+    </dict>
+</dict>
+</plist>'''
         
-        # Setup mocks
-        mock_parser = MagicMock()
-        mock_parser_class.return_value = mock_parser
-        mock_parser.parse.return_value = internal_tracks
-        mock_parser.music_folder = Path('/Users/test/Music/Music/Media')
+        with tempfile.NamedTemporaryFile(mode='w', suffix='.xml', delete=False) as f:
+            f.write(xml_content)
+            temp_xml_path = f.name
         
-        with patch('pathlib.Path.exists') as mock_exists:
-            mock_exists.return_value = True
-            
-            # Run command
+        try:
+            # Run command with limit
             result = runner.invoke(cli, [
                 'sync',
-                temp_xml_file,
+                temp_xml_path,
                 '--dry-run',
-                '--library-root', '/Users/test/Music/Music/Media'
+                '--limit', '2'
             ])
             
             # Check output
             assert result.exit_code == 0
-            # All tracks are inside library, so it should show this message
-            assert 'All tracks are already within the library folder' in result.output
+            # Should load only 2 tracks due to limit
+            assert 'Loaded 2 tracks' in result.output
+        finally:
+            Path(temp_xml_path).unlink(missing_ok=True)
     
-    @patch('mfdr.main.LibraryXMLParser')
-    def test_sync_missing_files(self, mock_parser_class, runner, mock_library_tracks, temp_xml_file):
-        """Test sync handling of missing files"""
-        # Setup mocks
-        mock_parser = MagicMock()
-        mock_parser_class.return_value = mock_parser
-        mock_parser.parse.return_value = mock_library_tracks
-        mock_parser.music_folder = Path('/Users/test/Music/Music/Media')
-        
-        # Create a custom mock for Path.exists
-        original_exists = Path.exists
-        
-        def mock_exists(self):
-            # XML file and auto-add dir should exist
-            path_str = str(self)
-            if path_str == temp_xml_file or 'Automatically Add' in path_str:
-                return True
-            return False
-        
-        # Patch Path.exists with our custom implementation
-        with patch.object(Path, 'exists', mock_exists):
+    def test_sync_no_external_files(self, runner):
+        """Test sync when all files are inside library"""
+        # Create temp directories
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp_path = Path(temp_dir)
+            library_root = temp_path / "Music" / "Media"
+            library_root.mkdir(parents=True)
+            auto_add_dir = library_root / "Automatically Add to Music.localized"
+            auto_add_dir.mkdir()
             
-            # Run command
-            result = runner.invoke(cli, [
-                'sync',
-                temp_xml_file,
-                '--dry-run'
-            ])
+            # Create XML with all tracks inside library
+            xml_content = f'''<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Music Folder</key>
+    <string>file://{library_root}/</string>
+    <key>Tracks</key>
+    <dict>
+        <key>1</key>
+        <dict>
+            <key>Track ID</key><integer>1</integer>
+            <key>Name</key><string>Song 1</string>
+            <key>Artist</key><string>Artist 1</string>
+            <key>Album</key><string>Album 1</string>
+            <key>Location</key><string>file://{library_root}/Artist1/Song1.mp3</string>
+            <key>Size</key><integer>1000000</integer>
+        </dict>
+        <key>2</key>
+        <dict>
+            <key>Track ID</key><integer>2</integer>
+            <key>Name</key><string>Song 2</string>
+            <key>Artist</key><string>Artist 2</string>
+            <key>Album</key><string>Album 2</string>
+            <key>Location</key><string>file://{library_root}/Artist2/Song2.mp3</string>
+            <key>Size</key><integer>2000000</integer>
+        </dict>
+    </dict>
+</dict>
+</plist>'''
             
-            # Should complete without errors
-            assert result.exit_code == 0
-    
-    @patch('mfdr.main.LibraryXMLParser')
-    @patch('shutil.copy2')
-    def test_sync_copy_error_handling(self, mock_copy, mock_parser_class, runner, mock_library_tracks, temp_xml_file):
-        """Test sync handles copy errors gracefully"""
-        # Setup mocks
-        mock_parser = MagicMock()
-        mock_parser_class.return_value = mock_parser
-        mock_parser.parse.return_value = mock_library_tracks
-        mock_parser.music_folder = Path('/Users/test/Music/Music/Media')
-        
-        # Make copy fail
-        mock_copy.side_effect = PermissionError("Permission denied")
-        
-        with patch('pathlib.Path.exists') as mock_exists:
-            mock_exists.return_value = True
+            with tempfile.NamedTemporaryFile(mode='w', suffix='.xml', delete=False) as f:
+                f.write(xml_content)
+                temp_xml_path = f.name
             
-            with patch('pathlib.Path.mkdir'):
+            try:
                 # Run command
                 result = runner.invoke(cli, [
                     'sync',
-                    temp_xml_file,
-                    '--library-root', '/Users/test/Music/Music/Media',
-                    '--auto-add-dir', '/tmp/AutoAdd'
+                    temp_xml_path,
+                    '--dry-run'
                 ])
                 
-                # Should complete with error count
+                # Check output
                 assert result.exit_code == 0
-                # May show "All tracks are already within the library folder" or copy errors
-                assert ('Failed to copy' in result.output or 
-                        'Failed' in result.output or
-                        'All tracks are already within the library folder' in result.output)
+                # All tracks are inside library, so it should show this message
+                assert 'All tracks are already within the library folder' in result.output
+            finally:
+                Path(temp_xml_path).unlink(missing_ok=True)
     
-    @patch('mfdr.main.LibraryXMLParser')
-    def test_sync_file_already_exists(self, mock_parser_class, runner, mock_library_tracks, temp_xml_file):
-        """Test sync skips files that already exist in destination"""
-        # Setup mocks
-        mock_parser = MagicMock()
-        mock_parser_class.return_value = mock_parser
-        mock_parser.parse.return_value = mock_library_tracks
-        mock_parser.music_folder = Path('/Users/test/Music/Music/Media')
-        
-        with patch('pathlib.Path.exists') as mock_exists:
-            # File exists in both source and destination
-            mock_exists.return_value = True
+    def test_sync_missing_files(self, runner):
+        """Test sync handling of missing files"""
+        # Create temp directories
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp_path = Path(temp_dir)
+            library_root = temp_path / "Music" / "Media"
+            library_root.mkdir(parents=True)
+            auto_add_dir = library_root / "Automatically Add to Music.localized"
+            auto_add_dir.mkdir()
             
-            with patch('pathlib.Path.mkdir'):
-                with patch('shutil.copy2'):
-                    # Run command
-                    result = runner.invoke(cli, [
-                        'sync',
-                        temp_xml_file,
-                        '--library-root', '/Users/test/Music/Music/Media',
-                        '--auto-add-dir', '/tmp/AutoAdd'
-                    ])
-                    
-                    # Should skip files that already exist
-                    assert result.exit_code == 0
-                    # May show either "All tracks are already within the library folder" if all inside,
-                    # or show copy activity
-                    assert ('All tracks are already within the library folder' in result.output or
-                            'Copied' in result.output or 
-                            'already in auto-add folder' in result.output or 
-                            'skipping' in result.output.lower())
+            # Create XML with missing track
+            xml_content = f'''<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Music Folder</key>
+    <string>file://{library_root}/</string>
+    <key>Tracks</key>
+    <dict>
+        <key>1</key>
+        <dict>
+            <key>Track ID</key><integer>1</integer>
+            <key>Name</key><string>Missing Track</string>
+            <key>Artist</key><string>Test Artist</string>
+            <key>Album</key><string>Test Album</string>
+            <key>Location</key><string>file://{temp_path}/NonExistent/Missing.mp3</string>
+            <key>Size</key><integer>1000</integer>
+        </dict>
+    </dict>
+</dict>
+</plist>'''
+            
+            with tempfile.NamedTemporaryFile(mode='w', suffix='.xml', delete=False) as f:
+                f.write(xml_content)
+                temp_xml_path = f.name
+            
+            try:
+                # Run command
+                result = runner.invoke(cli, [
+                    'sync',
+                    temp_xml_path,
+                    '--dry-run'
+                ])
+                
+                # Should complete without errors (missing files are ignored)
+                assert result.exit_code == 0
+                assert 'All tracks are already within the library folder' in result.output
+            finally:
+                Path(temp_xml_path).unlink(missing_ok=True)
+    
+    @patch('shutil.copy2')
+    def test_sync_copy_error_handling(self, mock_copy, runner):
+        """Test sync handles copy errors gracefully"""
+        # Create temp directories
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp_path = Path(temp_dir)
+            library_root = temp_path / "Music" / "Media"
+            library_root.mkdir(parents=True)
+            auto_add_dir = library_root / "Automatically Add to Music.localized"
+            auto_add_dir.mkdir()
+            
+            # Create external file
+            external_dir = temp_path / "Downloads"
+            external_dir.mkdir()
+            external_file = external_dir / "External.mp3"
+            external_file.write_text("fake mp3 content")
+            
+            # Create XML with external track
+            xml_content = f'''<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Music Folder</key>
+    <string>file://{library_root}/</string>
+    <key>Tracks</key>
+    <dict>
+        <key>1</key>
+        <dict>
+            <key>Track ID</key><integer>1</integer>
+            <key>Name</key><string>External Track</string>
+            <key>Artist</key><string>External Artist</string>
+            <key>Album</key><string>External Album</string>
+            <key>Location</key><string>file://{external_file}</string>
+            <key>Size</key><integer>1000</integer>
+        </dict>
+    </dict>
+</dict>
+</plist>'''
+            
+            with tempfile.NamedTemporaryFile(mode='w', suffix='.xml', delete=False) as f:
+                f.write(xml_content)
+                temp_xml_path = f.name
+            
+            # Make copy fail
+            mock_copy.side_effect = PermissionError("Permission denied")
+            
+            try:
+                # Run command
+                result = runner.invoke(cli, [
+                    'sync',
+                    temp_xml_path,
+                    '--auto-add-dir', str(auto_add_dir)
+                ])
+                
+                # Should complete but report failures
+                assert result.exit_code == 0
+                assert 'Failed: External.mp3' in result.output
+                assert 'Permission denied' in result.output
+            finally:
+                Path(temp_xml_path).unlink(missing_ok=True)
+    
+    def test_sync_file_already_exists(self, runner):
+        """Test sync skips files that already exist in destination"""
+        # Create temp directories
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp_path = Path(temp_dir)
+            library_root = temp_path / "Music" / "Media"
+            library_root.mkdir(parents=True)
+            auto_add_dir = library_root / "Automatically Add to Music.localized"
+            auto_add_dir.mkdir()
+            
+            # Create external file
+            external_dir = temp_path / "Downloads"
+            external_dir.mkdir()
+            external_file = external_dir / "External.mp3"
+            external_file.write_text("fake mp3 content")
+            
+            # Also create the same file in auto-add dir
+            existing_file = auto_add_dir / "External.mp3"
+            existing_file.write_text("already exists")
+            
+            # Create XML with external track
+            xml_content = f'''<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Music Folder</key>
+    <string>file://{library_root}/</string>
+    <key>Tracks</key>
+    <dict>
+        <key>1</key>
+        <dict>
+            <key>Track ID</key><integer>1</integer>
+            <key>Name</key><string>External Track</string>
+            <key>Artist</key><string>External Artist</string>
+            <key>Album</key><string>External Album</string>
+            <key>Location</key><string>file://{external_file}</string>
+            <key>Size</key><integer>1000</integer>
+        </dict>
+    </dict>
+</dict>
+</plist>'''
+            
+            with tempfile.NamedTemporaryFile(mode='w', suffix='.xml', delete=False) as f:
+                f.write(xml_content)
+                temp_xml_path = f.name
+            
+            try:
+                # Run command
+                result = runner.invoke(cli, [
+                    'sync',
+                    temp_xml_path,
+                    '--auto-add-dir', str(auto_add_dir)
+                ])
+                
+                # Should handle duplicate filenames
+                assert result.exit_code == 0
+                # Should copy with a different name since file exists
+                assert 'Copied: External.mp3' in result.output
+                
+                # Check that a renamed file was created
+                files_in_auto_add = list(auto_add_dir.glob("External*.mp3"))
+                assert len(files_in_auto_add) == 2  # Original + renamed copy
+            finally:
+                Path(temp_xml_path).unlink(missing_ok=True)
     
     def test_sync_invalid_xml(self, runner):
         """Test sync with invalid XML file"""
@@ -369,47 +460,59 @@ class TestSyncCommand:
             # Clean up
             Path(temp_path).unlink(missing_ok=True)
     
-    @patch('mfdr.main.LibraryXMLParser')
-    def test_sync_cloud_only_tracks(self, mock_parser_class, runner, temp_xml_file):
+    def test_sync_cloud_only_tracks(self, runner):
         """Test sync properly handles cloud-only tracks"""
-        # Create tracks with no location (cloud-only)
-        cloud_tracks = [
-            LibraryTrack(
-                track_id=1,
-                name="Cloud Song 1",
-                artist="Artist 1",
-                album="Album 1",
-                location=None,
-                size=None
-            ),
-            LibraryTrack(
-                track_id=2,
-                name="Cloud Song 2",
-                artist="Artist 2",
-                album="Album 2",
-                location=None,
-                size=None
-            )
-        ]
-        
-        # Setup mocks
-        mock_parser = MagicMock()
-        mock_parser_class.return_value = mock_parser
-        mock_parser.parse.return_value = cloud_tracks
-        mock_parser.music_folder = Path('/Users/test/Music/Music/Media')
-        
-        # Mock auto-add directory exists
-        with patch('pathlib.Path.exists', return_value=True):
-            # Run command
-            result = runner.invoke(cli, [
-                'sync',
-                temp_xml_file,
-                '--dry-run',
-                '--auto-add-dir', '/tmp/AutoAdd'
-            ])
-        
-            # Check output
-            assert result.exit_code == 0
-            # Cloud-only tracks (no location) should show "All tracks are already within the library folder"
-            # because they have no file path to check
-            assert 'All tracks are already within the library folder' in result.output
+        # Create temp directories
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp_path = Path(temp_dir)
+            library_root = temp_path / "Music" / "Media"
+            library_root.mkdir(parents=True)
+            auto_add_dir = library_root / "Automatically Add to Music.localized"
+            auto_add_dir.mkdir()
+            
+            # Create XML with cloud-only tracks (no Location)
+            xml_content = f'''<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Music Folder</key>
+    <string>file://{library_root}/</string>
+    <key>Tracks</key>
+    <dict>
+        <key>1</key>
+        <dict>
+            <key>Track ID</key><integer>1</integer>
+            <key>Name</key><string>Cloud Song 1</string>
+            <key>Artist</key><string>Artist 1</string>
+            <key>Album</key><string>Album 1</string>
+        </dict>
+        <key>2</key>
+        <dict>
+            <key>Track ID</key><integer>2</integer>
+            <key>Name</key><string>Cloud Song 2</string>
+            <key>Artist</key><string>Artist 2</string>
+            <key>Album</key><string>Album 2</string>
+        </dict>
+    </dict>
+</dict>
+</plist>'''
+            
+            with tempfile.NamedTemporaryFile(mode='w', suffix='.xml', delete=False) as f:
+                f.write(xml_content)
+                temp_xml_path = f.name
+            
+            try:
+                # Run command
+                result = runner.invoke(cli, [
+                    'sync',
+                    temp_xml_path,
+                    '--dry-run'
+                ])
+                
+                # Check output
+                assert result.exit_code == 0
+                # Cloud-only tracks (no location) should show "All tracks are already within the library folder"
+                # because they have no file path to check
+                assert 'All tracks are already within the library folder' in result.output
+            finally:
+                Path(temp_xml_path).unlink(missing_ok=True)

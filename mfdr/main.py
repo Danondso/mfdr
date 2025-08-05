@@ -215,7 +215,8 @@ def _scan_xml(xml_path: Path, missing_only: bool, replace: bool,
             if limit:
                 tracks = tracks[:limit]
         
-        console.print(f"[success]✅ Loaded {len(tracks)} tracks[/success]\n")
+        console.print(f"[success]✅ Loaded {len(tracks)} tracks[/success]")
+        console.print()
         
         # Auto-detect auto-add directory if not specified
         if replace and not auto_add_dir:
@@ -224,7 +225,8 @@ def _scan_xml(xml_path: Path, missing_only: bool, replace: bool,
                 auto_add_dir = Path.home() / "Music" / "iTunes" / "iTunes Media" / "Automatically Add to iTunes.localized"
             
             if auto_add_dir.exists():
-                console.print(f"[info]📁 Auto-add directory: {auto_add_dir}[/info]\n")
+                console.print(f"[info]📁 Auto-add directory: {auto_add_dir}[/info]")
+                console.print()
             else:
                 console.print("[error]❌ Could not find auto-add directory. Please specify with --auto-add-dir[/error]")
                 return
@@ -238,7 +240,8 @@ def _scan_xml(xml_path: Path, missing_only: bool, replace: bool,
                 file_manager.index_files()
                 index_time = time.time() - start_time
             
-            console.print(f"[success]✅ Indexed {len(file_manager.file_index)} files in {index_time:.1f}s[/success]\n")
+            console.print(f"[success]✅ Indexed {len(file_manager.file_index)} files in {index_time:.1f}s[/success]")
+            console.print()
         
         # Process tracks
         console.print(Panel.fit("🔍 Scanning Tracks", style="bold cyan"))
@@ -344,7 +347,8 @@ def _scan_xml(xml_path: Path, missing_only: bool, replace: bool,
             checkpoint_file.unlink()
         
         # Display results
-        console.print("\n")
+        console.print()
+        console.print()
         console.print(Rule("📊 Scan Results", style="bold cyan"))
         
         # Summary statistics
@@ -360,7 +364,8 @@ def _scan_xml(xml_path: Path, missing_only: bool, replace: bool,
         
         # Detailed results for missing tracks
         if missing_tracks and not replace:
-            console.print("\n[bold red]Missing Tracks:[/bold red]")
+            console.print()
+            console.print("[bold red]Missing Tracks:[/bold red]")
             for track in missing_tracks[:10]:  # Show first 10
                 console.print(f"  • {track.artist} - {track.name}")
             if len(missing_tracks) > 10:
@@ -368,7 +373,8 @@ def _scan_xml(xml_path: Path, missing_only: bool, replace: bool,
         
         # Detailed results for corrupted tracks
         if corrupted_tracks and not quarantine:
-            console.print("\n[bold yellow]Corrupted Tracks:[/bold yellow]")
+            console.print()
+            console.print("[bold yellow]Corrupted Tracks:[/bold yellow]")
             for track, details in corrupted_tracks[:10]:  # Show first 10
                 reason = details.get("reason", "unknown")
                 console.print(f"  • {track.artist} - {track.name} ({reason})")
@@ -397,7 +403,8 @@ def _scan_xml(xml_path: Path, missing_only: bool, replace: bool,
                                 f.write(f"   Original path: {track.file_path}\n")
                             f.write("\n")
                     
-                    console.print(f"\n[success]📝 Created missing tracks report: {report_path}[/success]")
+                    console.print()
+                    console.print(f"[success]📝 Created missing tracks report: {report_path}[/success]")
                     console.print(f"[info]   Contains {len(missing_tracks)} missing tracks[/info]")
                 
                 elif playlist.suffix == '.m3u' and replaced_tracks:
@@ -416,26 +423,33 @@ def _scan_xml(xml_path: Path, missing_only: bool, replace: bool,
                             # Write the replacement file path
                             f.write(f"{candidate.path}\n")
                     
-                    console.print(f"\n[success]📝 Created playlist of found tracks: {playlist_path}[/success]")
+                    console.print()
+                    console.print(f"[success]📝 Created playlist of found tracks: {playlist_path}[/success]")
                     console.print(f"[info]   Contains {len(replaced_tracks)} tracks with replacements[/info]")
                 
                 elif playlist.suffix == '.m3u' and missing_tracks:
-                    console.print(f"\n[warning]⚠️  No replacements found to create playlist[/warning]")
+                    console.print()
+                    console.print(f"[warning]⚠️  No replacements found to create playlist[/warning]")
                     console.print(f"[info]💡 Use .txt extension to create a report of missing tracks instead[/info]")
                     
             except Exception as e:
-                console.print(f"\n[error]❌ Failed to create playlist/report: {e}[/error]")
+                console.print()
+                console.print(f"[error]❌ Failed to create playlist/report: {e}[/error]")
         
         # Tips
         if missing_tracks and not search_dir:
-            console.print("\n[info]💡 Tip: Use -s/--search-dir to search for replacements[/info]")
+            console.print()
+            console.print("[info]💡 Tip: Use -s/--search-dir to search for replacements[/info]")
         if corrupted_tracks and not quarantine:
-            console.print("\n[info]💡 Tip: Use -q/--quarantine to move corrupted files[/info]")
+            console.print()
+            console.print("[info]💡 Tip: Use -q/--quarantine to move corrupted files[/info]")
         if missing_tracks and not playlist:
-            console.print("\n[info]💡 Tip: Use -p/--playlist to create an M3U playlist of missing tracks[/info]")
+            console.print()
+            console.print("[info]💡 Tip: Use -p/--playlist to create an M3U playlist of missing tracks[/info]")
         
     except KeyboardInterrupt:
-        console.print("\n[warning]⚠️  Scan interrupted by user[/warning]")
+        console.print()
+        console.print("[warning]⚠️  Scan interrupted by user[/warning]")
         if checkpoint:
             console.print(f"[info]💾 Progress saved. Resume with --checkpoint[/info]")
         sys.exit(1)
@@ -486,9 +500,11 @@ def _scan_directory(directory: Path, dry_run: bool, limit: Optional[int],
                 checkpoint_data = json.load(f)
                 processed_files = set(checkpoint_data.get("processed_files", []))
                 stats = checkpoint_data.get("stats", stats)
-                console.print(f"[info]📥 Resumed from checkpoint: {len(processed_files)} files already processed[/info]\n")
+                console.print(f"[info]📥 Resumed from checkpoint: {len(processed_files)} files already processed[/info]")
+                console.print()
         except Exception as e:
-            console.print(f"[warning]⚠️  Failed to load checkpoint: {e}[/warning]\n")
+            console.print(f"[warning]⚠️  Failed to load checkpoint: {e}[/warning]")
+            console.print()
     
     # Find audio files
     audio_extensions = {'.mp3', '.m4a', '.m4p', '.aac', '.flac', '.wav', '.ogg', '.opus'}
@@ -514,7 +530,8 @@ def _scan_directory(directory: Path, dry_run: bool, limit: Optional[int],
         console.print("[warning]⚠️  No audio files found to process[/warning]")
         return
     
-    console.print(f"[success]✅ Found {len(audio_files)} files to check[/success]\n")
+    console.print(f"[success]✅ Found {len(audio_files)} files to check[/success]")
+    console.print()
     
     # Process files
     console.print(Panel.fit("🔍 Checking Files", style="bold cyan"))
@@ -590,16 +607,20 @@ def _scan_directory(directory: Path, dry_run: bool, limit: Optional[int],
         # Clean up checkpoint if completed successfully
         if stats["total_checked"] >= len(audio_files) + len(processed_files) - stats["total_checked"]:
             checkpoint_file.unlink(missing_ok=True)
-            console.print("\n[success]✅ Scan completed successfully[/success]")
+            console.print()
+            console.print("[success]✅ Scan completed successfully[/success]")
         
     except KeyboardInterrupt:
-        console.print("\n[warning]⚠️  Scan interrupted[/warning]")
+        console.print()
+        console.print("[warning]⚠️  Scan interrupted[/warning]")
         save_checkpoint()
         console.print(f"[info]💾 Progress saved. Use --resume to continue[/info]")
         return
     
     # Display results
-    console.print("\n" + "="*50 + "\n")
+    console.print()
+    console.print("=" * 50)
+    console.print()
     
     summary_data = [
         ("Files Checked", f"{stats['total_checked']:,}"),
@@ -611,7 +632,8 @@ def _scan_directory(directory: Path, dry_run: bool, limit: Optional[int],
     console.print(create_summary_table("Scan Summary", summary_data))
     
     if corrupted_files and dry_run:
-        console.print(f"\n[info]💡 Run without --dry-run to quarantine {len(corrupted_files)} corrupted files[/info]")
+        console.print()
+        console.print(f"[info]💡 Run without --dry-run to quarantine {len(corrupted_files)} corrupted files[/info]")
 
 @cli.command()
 @click.argument('xml_path', type=click.Path(exists=True, path_type=Path))
@@ -628,8 +650,6 @@ def sync(xml_path: Path, library_root: Optional[Path],
     Finds tracks that are outside the Apple Music library folder and copies
     them to the 'Automatically Add to Music' folder for import.
     """
-    
-    from .library_xml_parser import LibraryXMLParser
     import shutil
     
     console.print(Panel.fit("🔄 Library Sync", style="bold cyan"))
@@ -643,7 +663,8 @@ def sync(xml_path: Path, library_root: Optional[Path],
         if limit:
             tracks = tracks[:limit]
     
-    console.print(f"[success]✅ Loaded {len(tracks)} tracks[/success]\n")
+    console.print(f"[success]✅ Loaded {len(tracks)} tracks[/success]")
+    console.print()
     
     # Auto-detect library root if not provided
     if not library_root:
@@ -701,7 +722,9 @@ def sync(xml_path: Path, library_root: Optional[Path],
         console.print("[info]ℹ️  All tracks are already within the library folder[/info]")
         return
     
-    console.print(f"\n[warning]Found {len(outside_tracks)} tracks outside library[/warning]\n")
+    console.print()
+    console.print(f"[warning]Found {len(outside_tracks)} tracks outside library[/warning]")
+    console.print()
     
     # Copy tracks
     copied = 0
@@ -732,6 +755,7 @@ def sync(xml_path: Path, library_root: Optional[Path],
                         counter += 1
                 
                 if not dry_run:
+                    import shutil
                     shutil.copy2(source, dest)
                     progress.console.print(f"[green]✅ Copied: {source.name}[/green]")
                 else:
@@ -746,7 +770,9 @@ def sync(xml_path: Path, library_root: Optional[Path],
             progress.advance(copy_task)
     
     # Summary
-    console.print("\n" + "="*50 + "\n")
+    console.print()
+    console.print("=" * 50)
+    console.print()
     
     summary_data = [
         ("Tracks Outside Library", f"{len(outside_tracks):,}"),
@@ -757,7 +783,8 @@ def sync(xml_path: Path, library_root: Optional[Path],
     console.print(create_summary_table("Sync Summary", summary_data))
     
     if dry_run and copied > 0:
-        console.print(f"\n[info]💡 Run without --dry-run to copy {copied} tracks[/info]")
+        console.print()
+        console.print(f"[info]💡 Run without --dry-run to copy {copied} tracks[/info]")
 
 if __name__ == "__main__":
     cli()
