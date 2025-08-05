@@ -34,8 +34,11 @@ pip install -e .
 # Check only for missing tracks (faster)
 ./venv/bin/python -m mfdr scan ~/Desktop/Library.xml --missing-only
 
-# Create a playlist of missing tracks
-./venv/bin/python -m mfdr scan ~/Desktop/Library.xml -m -p missing_tracks.m3u
+# Create a text report of missing tracks
+./venv/bin/python -m mfdr scan ~/Desktop/Library.xml -m -p missing_tracks.txt
+
+# Create M3U playlist of found replacements (when using -r)
+./venv/bin/python -m mfdr scan ~/Desktop/Library.xml -m -r -s ~/Backup -p found_tracks.m3u
 
 # Find and auto-copy replacements for missing tracks
 ./venv/bin/python -m mfdr scan ~/Desktop/Library.xml -m -r -s ~/Backup
@@ -70,7 +73,7 @@ To export Library.xml: Apple Music → File → Library → Export Library...
 - `-dr, --dry-run` - Preview changes without making them
 - `-l, --limit N` - Limit number of tracks to process
 - `--auto-add-dir PATH` - Override auto-add directory (auto-detected by default)
-- `-p, --playlist PATH` - Create M3U playlist of missing tracks
+- `-p, --playlist PATH` - Create playlist/report (.m3u for found tracks, .txt for missing report)
 - `-v, --verbose` - Show detailed match information
 
 ### `qscan` - Quarantine Scanner

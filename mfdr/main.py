@@ -322,31 +322,56 @@ def scan(xml_path: Path, missing_only: bool, replace: bool,
             if len(corrupted_tracks) > 10:
                 console.print(f"  ... and {len(corrupted_tracks) - 10} more")
         
-        # Generate playlist if requested
-        if playlist and missing_tracks:
+        # Generate playlist/report if requested
+        if playlist:
             try:
-                # Create M3U playlist
-                playlist_path = playlist if playlist.suffix == '.m3u' else playlist.with_suffix('.m3u')
-                with open(playlist_path, 'w', encoding='utf-8') as f:
-                    f.write("#EXTM3U\n")
-                    f.write(f"# Missing tracks from {xml_path.name}\n")
-                    f.write(f"# Generated on {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
-                    f.write(f"# Total missing tracks: {len(missing_tracks)}\n\n")
+                # Determine format based on extension
+                if playlist.suffix == '.txt' or not playlist.suffix:
+                    # Create text report of missing tracks
+                    report_path = playlist if playlist.suffix == '.txt' else playlist.with_suffix('.txt')
+                    with open(report_path, 'w', encoding='utf-8') as f:
+                        f.write(f"Missing Tracks Report\n")
+                        f.write(f"====================\n")
+                        f.write(f"Source: {xml_path.name}\n")
+                        f.write(f"Generated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
+                        f.write(f"Total missing tracks: {len(missing_tracks)}\n\n")
+                        
+                        for i, track in enumerate(missing_tracks, 1):
+                            f.write(f"{i}. {track.artist} - {track.name}\n")
+                            if track.album:
+                                f.write(f"   Album: {track.album}\n")
+                            if track.file_path:
+                                f.write(f"   Original path: {track.file_path}\n")
+                            f.write("\n")
                     
-                    for track in missing_tracks:
-                        # Write extended info
-                        duration = int(track.duration_seconds) if track.duration_seconds else -1
-                        f.write(f"#EXTINF:{duration},{track.artist} - {track.name}\n")
-                        # Write the original file path (even though it's missing)
-                        if track.file_path:
-                            f.write(f"{track.file_path}\n")
-                        else:
-                            f.write(f"# Missing: {track.artist} - {track.name}\n")
+                    console.print(f"\n[success]📝 Created missing tracks report: {report_path}[/success]")
+                    console.print(f"[info]   Contains {len(missing_tracks)} missing tracks[/info]")
                 
-                console.print(f"\n[success]📝 Created playlist: {playlist_path}[/success]")
-                console.print(f"[info]   Contains {len(missing_tracks)} missing tracks[/info]")
+                elif playlist.suffix == '.m3u' and replaced_tracks:
+                    # Create M3U playlist of successfully found/replaced tracks
+                    playlist_path = playlist
+                    with open(playlist_path, 'w', encoding='utf-8') as f:
+                        f.write("#EXTM3U\n")
+                        f.write(f"# Found replacements from {xml_path.name}\n")
+                        f.write(f"# Generated on {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
+                        f.write(f"# Total found tracks: {len(replaced_tracks)}\n\n")
+                        
+                        for track, candidate, score in replaced_tracks:
+                            # Write extended info
+                            duration = int(track.duration_seconds) if track.duration_seconds else -1
+                            f.write(f"#EXTINF:{duration},{track.artist} - {track.name}\n")
+                            # Write the replacement file path
+                            f.write(f"{candidate.path}\n")
+                    
+                    console.print(f"\n[success]📝 Created playlist of found tracks: {playlist_path}[/success]")
+                    console.print(f"[info]   Contains {len(replaced_tracks)} tracks with replacements[/info]")
+                
+                elif playlist.suffix == '.m3u' and missing_tracks:
+                    console.print(f"\n[warning]⚠️  No replacements found to create playlist[/warning]")
+                    console.print(f"[info]💡 Use .txt extension to create a report of missing tracks instead[/info]")
+                    
             except Exception as e:
-                console.print(f"\n[error]❌ Failed to create playlist: {e}[/error]")
+                console.print(f"\n[error]❌ Failed to create playlist/report: {e}[/error]")
         
         # Tips
         if missing_tracks and not search_dir:
