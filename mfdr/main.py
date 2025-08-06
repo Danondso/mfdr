@@ -23,6 +23,7 @@ from .file_manager import FileManager
 from .track_matcher import TrackMatcher
 from .completeness_checker import CompletenessChecker
 from .library_xml_parser import LibraryXMLParser
+from .apple_music import open_playlist_in_music
 
 # Initialize Rich console
 console = Console()
@@ -112,6 +113,8 @@ def cli(verbose: bool):
               help='[XML mode] Override auto-add directory (auto-detected by default)')
 @click.option('--playlist', '-p', type=click.Path(path_type=Path),
               help='[XML mode] Create M3U playlist of missing tracks')
+@click.option('--no-open', is_flag=True,
+              help='[XML mode] Do not open M3U playlist in Apple Music after creation')
 # Directory mode specific options  
 @click.option('--recursive', is_flag=True, default=True,
               help='[Dir mode] Search subdirectories recursively')
@@ -124,7 +127,7 @@ def cli(verbose: bool):
 def scan(path: Path, mode: str, quarantine: bool, fast: bool, dry_run: bool,
          limit: Optional[int], checkpoint: bool, verbose: bool,
          missing_only: bool, replace: bool, search_dir: Optional[Path], 
-         auto_add_dir: Optional[Path], playlist: Optional[Path],
+         auto_add_dir: Optional[Path], playlist: Optional[Path], no_open: bool,
          recursive: bool, quarantine_dir: Optional[Path], 
          checkpoint_interval: int, resume: bool) -> None:
     """Scan for missing and corrupted tracks in Library.xml or directories
@@ -170,7 +173,7 @@ def scan(path: Path, mode: str, quarantine: bool, fast: bool, dry_run: bool,
     # Route to appropriate handler
     if mode == 'xml':
         _scan_xml(path, missing_only, replace, search_dir, quarantine, checkpoint,
-                  fast, dry_run, limit, auto_add_dir, verbose, playlist)
+                  fast, dry_run, limit, auto_add_dir, verbose, playlist, no_open)
     else:
         _scan_directory(path, dry_run, limit, recursive, quarantine_dir, fast,
                        checkpoint_interval, resume, quarantine)
@@ -178,7 +181,7 @@ def scan(path: Path, mode: str, quarantine: bool, fast: bool, dry_run: bool,
 def _scan_xml(xml_path: Path, missing_only: bool, replace: bool,
               search_dir: Optional[Path], quarantine: bool, checkpoint: bool,
               fast: bool, dry_run: bool, limit: Optional[int], auto_add_dir: Optional[Path],
-              verbose: bool, playlist: Optional[Path]) -> None:
+              verbose: bool, playlist: Optional[Path], no_open: bool) -> None:
     """Handle XML mode scanning"""
     
     # Display configuration
@@ -426,6 +429,17 @@ def _scan_xml(xml_path: Path, missing_only: bool, replace: bool,
                     console.print()
                     console.print(f"[success]📝 Created playlist of found tracks: {playlist_path}[/success]")
                     console.print(f"[info]   Contains {len(replaced_tracks)} tracks with replacements[/info]")
+                    
+                    # Open playlist in Apple Music unless --no-open is specified
+                    if not no_open:
+                        console.print()
+                        console.print("[info]🎵 Opening playlist in Apple Music...[/info]")
+                        success, error_msg = open_playlist_in_music(playlist_path)
+                        if success:
+                            console.print("[success]✅ Playlist opened in Apple Music[/success]")
+                        else:
+                            console.print(f"[warning]⚠️  Could not open playlist: {error_msg}[/warning]")
+                            console.print("[info]💡 You can manually open the playlist file in Apple Music[/info]")
                 
                 elif playlist.suffix == '.m3u' and missing_tracks:
                     console.print()
