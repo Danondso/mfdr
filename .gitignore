@@ -38,6 +38,7 @@ htmlcov/
 
 # Project specific
 quarantine/
+test_scan/
 *.log
 
 # Test fixtures - audio files for testing

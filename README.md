@@ -4,18 +4,25 @@
 [![codecov](https://codecov.io/gh/Danondso/mfdr/branch/main/graph/badge.svg)](https://codecov.io/gh/Danondso/mfdr)
 [![Python 3.9+](https://img.shields.io/badge/python-3.9+-blue)](https://www.python.org/)
 
-A fast, beautiful CLI tool for checking music file integrity and managing your Apple Music library.
+A fast, efficient CLI tool for checking music file integrity and managing your Apple Music library.
 
 ## Features
 
-- 🎵 **Audio Integrity Checking** - Detect corrupted, truncated, and DRM-protected files
-- 🔍 **Apple Music Scanner** - Find missing tracks and suggest replacements  
-- 📦 **Smart Quarantine** - Organize problematic files by issue type
-- ⚡ **Fast & Resumable** - Efficiently scan large libraries with resume support
-- 🎨 **Rich Terminal UI** - Beautiful output with progress bars and tables
+- **Audio Integrity Checking** - Detect corrupted, truncated, and DRM-protected files
+- **XML Library Scanning** - Fast scanning using exported Library.xml files
+- **Missing Track Detection** - Find and replace missing tracks from backup locations
+- **Smart Quarantine** - Organize problematic files by issue type
+- **Resume Support** - Continue interrupted scans from checkpoints
+- **Rich Terminal UI** - Clean output with progress tracking
 
 ## Installation
 
+### Prerequisites
+- Python 3.9 or higher
+- FFmpeg (optional, for advanced audio validation)
+- macOS (for Apple Music integration features)
+
+### Setup
 ```bash
 git clone https://github.com/Danondso/mfdr.git
 cd mfdr
@@ -26,125 +33,131 @@ pip install -e .
 
 ## Quick Start
 
+### Basic Usage
+
 ```bash
-# Check a single file or directory
-./venv/bin/python -m mfdr check ~/Music/song.mp3
-./venv/bin/python -m mfdr check ~/Music/
-
 # Scan Apple Music library for missing tracks
-./venv/bin/python -m mfdr scan --limit 10
+./venv/bin/python -m mfdr scan ~/Desktop/Library.xml --missing-only
 
-# Find and quarantine corrupted files (always dry-run first!)
-./venv/bin/python -m mfdr qscan ~/Music --dry-run
-./venv/bin/python -m mfdr qscan ~/Music
+# Check directory for corrupted audio files
+./venv/bin/python -m mfdr scan ~/Music --dry-run
 
-# Scan exported Library.xml for missing tracks
-./venv/bin/python -m mfdr mscan ~/Desktop/Library.xml --search-dir ~/Backup
+# Find replacements for missing tracks from backup
+./venv/bin/python -m mfdr scan ~/Desktop/Library.xml -r -s ~/Backup
 ```
+
+To export Library.xml from Apple Music: **File → Library → Export Library...**
 
 ## Commands
 
-### `check` - File Integrity Check
-Check files or directories for corruption, DRM, and other issues.
+### `scan` - Universal Scanner
+
+The scan command automatically detects whether you're scanning an XML library file or a directory of audio files.
 
 ```bash
-./venv/bin/python -m mfdr check [PATH] [OPTIONS]
+./venv/bin/python -m mfdr scan [PATH] [OPTIONS]
 ```
-- `-q, --quarantine` - Move bad files to quarantine
-- `-v, --verbose` - Show detailed results
 
-### `scan` - Apple Music Library Scanner  
-Find missing tracks in your Apple Music library and search for replacements.
+#### Common Options
+- `-q, --quarantine` - Move corrupted files to quarantine
+- `-f, --fast` - Skip detailed integrity checks
+- `-dr, --dry-run` - Preview changes without applying them
+- `-l, --limit N` - Process only N files/tracks
+- `-v, --verbose` - Show detailed output
 
-```bash
-./venv/bin/python -m mfdr scan [OPTIONS]
-```
+#### XML Library Mode
+Scans tracks from an exported Library.xml file.
+
+**Additional Options:**
+- `--missing-only` - Check only for missing tracks (faster)
+- `-r, --replace` - Auto-copy found replacements to Apple Music
 - `-s, --search-dir PATH` - Directory to search for replacements
-- `-dr, --dry-run` - Preview without making changes
-- `-l, --limit N` - Process only first N tracks
-- `-r, --resume-from TEXT` - Resume from specific track
-- `-q` - Quarantine corrupted originals after replacement
+- `-p, --playlist PATH` - Generate playlist (.m3u) or report (.txt)
 
-### `qscan` - Quarantine Scanner
-Scan directories and automatically quarantine corrupted files with checkpoint support.
+**Examples:**
+```bash
+# Find missing tracks and generate report
+./venv/bin/python -m mfdr scan Library.xml --missing-only -p missing.txt
+
+# Replace missing tracks from backup with M3U playlist
+./venv/bin/python -m mfdr scan Library.xml -r -s ~/Backup -p found.m3u
+```
+
+#### Directory Mode
+Scans audio files in a directory for corruption.
+
+**Additional Options:**
+- `--recursive` - Include subdirectories (default: true)
+- `--resume` - Continue from last checkpoint
+- `--checkpoint-interval N` - Save progress every N files
+
+**Examples:**
+```bash
+# Check music folder with dry run
+./venv/bin/python -m mfdr scan ~/Music --dry-run
+
+# Quarantine corrupted files
+./venv/bin/python -m mfdr scan ~/Music --quarantine
+
+# Resume interrupted scan
+./venv/bin/python -m mfdr scan ~/Music --resume
+```
+
+### `sync` - Library Sync
+
+Copies external tracks from Library.xml into your Apple Music library.
 
 ```bash
-./venv/bin/python -m mfdr qscan [DIRECTORY] [OPTIONS]
+./venv/bin/python -m mfdr sync Library.xml [OPTIONS]
 ```
-- `-dr, --dry-run` - Preview what would be quarantined
-- `-q, --quarantine-dir PATH` - Custom quarantine location
-- `-f, --fast-scan` - Quick check (file endings only)
-- `-l, --limit N` - Check only first N files
-- `-c, --checkpoint-interval N` - Save progress every N files (default: 100)
-- `--resume` - Resume from last checkpoint if scan was interrupted
 
-### `mscan` - Library.xml Scanner
-Validate exported Library.xml files and find missing tracks.
-
-To export Library.xml: Apple Music → File → Library → Export Library...
-
-```bash
-./venv/bin/python -m mfdr mscan [XML_PATH] [OPTIONS]
-```
-- `-s, --search-dir PATH` - Search for replacements
-- `-r, --replace` - Auto-copy high-confidence matches (90+ score)
-- `-dr, --dry-run` - Preview without copying
+**Options:**
+- `-dr, --dry-run` - Preview files to be copied
 - `-l, --limit N` - Process only first N tracks
+- `--auto-add-dir PATH` - Override auto-add folder location
 
-## What Gets Checked
+## Audio Validation
 
-- **Metadata** - Valid audio metadata exists
-- **DRM Protection** - iTunes DRM detection (.m4p, drms codec)
-- **File Integrity** - Can be decoded by FFmpeg
-- **Truncation** - Duration matches metadata
-- **End-of-File** - Seekable to end without errors
+Files are checked for:
+- **Metadata Integrity** - Valid audio metadata
+- **DRM Protection** - iTunes DRM detection
+- **File Corruption** - FFmpeg decode validation
+- **Truncation** - Duration consistency
+- **EOF Integrity** - Seekable to end
 
-## Quarantine Organization
-
-Bad files are organized by issue type:
-- `quarantine/drm/` - DRM protected files
-- `quarantine/no_metadata/` - Missing metadata
-- `quarantine/truncated/` - Duration mismatches  
-- `quarantine/corrupted/` - General corruption or decode failures
+### Quarantine Structure
+```
+quarantine/
+├── drm/          # DRM protected files
+├── no_metadata/  # Missing metadata
+├── truncated/    # Duration mismatches
+└── corrupted/    # Decode failures
+```
 
 ## Supported Formats
 
 MP3, M4A, M4P, AAC, FLAC, WAV, OGG, OPUS
 
-## Example Output
-
-```console
-$ ./venv/bin/python -m mfdr check ~/Music/Albums/
-
-📁 Checking directory: ~/Music/Albums
-🎵 Found 156 files
-
-❌ Track2.m4p - DRM protected file
-❌ Song5.mp3 - No metadata found
-
-      Summary      
-┏━━━━━━━━━┳━━━━━━━┓
-┃ Status  ┃ Count ┃
-┡━━━━━━━━━╇━━━━━┩
-│ ✅ Good │   154 │
-│ ❌ Bad  │     2 │
-└─────────┴───────┘
-
-💡 Use --quarantine to move bad files
-```
-
-## Requirements
-
-- Python 3.9+
-- macOS/Linux/Windows
-- FFmpeg (optional but recommended)
-
 ## Tips
 
-- Always do a `--dry-run` first before quarantining
-- Use `--limit` to test on a subset of files
-- Export Library.xml from Apple Music to check your entire library
-- Check quarantine folders to review problematic files
+1. **Always start with `--dry-run`** to preview changes
+2. **Export Library.xml regularly** to track your full library
+3. **Use `--missing-only`** for faster scans when checking for missing files
+4. **Enable `--checkpoint`** for large library scans
+5. **Keep backups** before using quarantine or replace features
+
+## Development
+
+```bash
+# Run tests
+./venv/bin/python -m pytest
+
+# Check coverage
+./venv/bin/python -m pytest --cov=mfdr
+
+# Run specific test
+./venv/bin/python -m pytest tests/test_apple_music.py -xvs
+```
 
 ## License
 

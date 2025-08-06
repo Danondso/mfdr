@@ -8,7 +8,7 @@ from typing import List, Dict, Set, Optional
 from dataclasses import dataclass
 import re
 
-from .apple_music import Track
+from .library_xml_parser import LibraryTrack
 
 logger = logging.getLogger(__name__)
 
@@ -91,7 +91,7 @@ class FileManager:
                             self.artist_index[word] = []
                         self.artist_index[word].append(file_path)
     
-    def search_files(self, track: Track) -> List[FileCandidate]:
+    def search_files(self, track: LibraryTrack) -> List[FileCandidate]:
         """Search for files that might match the given track"""
         candidates = set()
         
@@ -136,7 +136,7 @@ class FileManager:
         logger.debug(f"Found {len(result)} candidates for {track}")
         return result
     
-    def _fuzzy_search(self, track: Track) -> Set[Path]:
+    def _fuzzy_search(self, track: LibraryTrack) -> Set[Path]:
         """Perform fuzzy search when exact matches fail"""
         candidates = set()
         

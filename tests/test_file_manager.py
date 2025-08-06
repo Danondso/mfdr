@@ -3,7 +3,7 @@ from pathlib import Path
 from unittest.mock import Mock, MagicMock, patch
 import json
 from mfdr.file_manager import FileManager, FileCandidate
-from mfdr.apple_music import Track
+from mfdr.library_xml_parser import LibraryTrack
 
 
 class TestFileCandidate:
@@ -66,11 +66,12 @@ class TestFileManager:
     
     @pytest.fixture
     def sample_track(self):
-        return Track(
+        return LibraryTrack(
+            track_id=1001,
             name="Song 1",
             artist="Artist One",
             album="Album One",
-            duration=180.5,
+            total_time=180500,  # milliseconds
             size=4000
         )
     
@@ -116,7 +117,8 @@ class TestFileManager:
         assert "Song 1.m4a" in paths, f"Expected 'Song 1.m4a' in candidates, got {paths}"
     
     def test_search_files_no_match(self, file_manager):
-        track = Track(
+        track = LibraryTrack(
+            track_id=1002,
             name="Nonexistent Song",
             artist="Unknown Artist",
             album="Unknown Album"
@@ -127,7 +129,8 @@ class TestFileManager:
         # The actual filtering happens later in the matching process
     
     def test_search_files_multiple_matches(self, file_manager):
-        track = Track(
+        track = LibraryTrack(
+            track_id=1003,
             name="Song",
             artist="Artist One",
             album="Album One"
@@ -151,7 +154,8 @@ class TestFileManager:
         assert "Song 1.m4a" in result_names, f"Expected 'Song 1.m4a' in fuzzy results"
     
     def test_fuzzy_search_similar_name(self, file_manager):
-        track = Track(
+        track = LibraryTrack(
+            track_id=1004,
             name="Song 1 Remix",
             artist="Artist One",
             album="Album One"
@@ -231,8 +235,8 @@ class TestFileManager:
         assert len(fm.file_index) == 1
     
     def test_case_insensitive_search(self, file_manager):
-        track1 = Track(name="SONG 1", artist="ARTIST ONE", album="ALBUM ONE")
-        track2 = Track(name="song 1", artist="artist one", album="album one")
+        track1 = LibraryTrack(track_id=1005, name="SONG 1", artist="ARTIST ONE", album="ALBUM ONE")
+        track2 = LibraryTrack(track_id=1006, name="song 1", artist="artist one", album="album one")
         
         candidates1 = file_manager.search_files(track1)
         candidates2 = file_manager.search_files(track2)

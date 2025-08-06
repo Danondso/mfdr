@@ -2,7 +2,7 @@ import pytest
 from pathlib import Path
 from unittest.mock import Mock, MagicMock, patch
 from mfdr.track_matcher import TrackMatcher
-from mfdr.apple_music import Track
+from mfdr.library_xml_parser import LibraryTrack
 from mfdr.file_manager import FileCandidate
 from fuzzywuzzy import fuzz
 
@@ -15,13 +15,14 @@ class TestTrackMatcher:
     
     @pytest.fixture
     def sample_track(self):
-        return Track(
+        return LibraryTrack(
+            track_id=1001,
             name="Test Song",
             artist="Test Artist",
             album="Test Album",
-            duration=180.5,
+            total_time=180500,  # milliseconds
             size=5242880,
-            location=Path("/original/path/test.m4a")
+            location="file:///original/path/test.m4a"
         )
     
     @pytest.fixture
@@ -206,13 +207,14 @@ class TestTrackMatcher:
         assert isinstance(details, dict), "Details should be a dictionary"
     
     def test_various_artist_handling(self, matcher, temp_dir):
-        track = Track(
+        track = LibraryTrack(
+            track_id=2001,
             name="Test Song",
             artist="Various Artists",
             album="Compilation Album",
-            duration=180.5,
+            total_time=180500,
             size=5242880,
-            location=Path("/original/path/test.m4a")
+            location="file:///original/path/test.m4a"
         )
         candidate = FileCandidate(
             path=temp_dir / "Compilations" / "Compilation Album" / "Test Song.m4a",
@@ -241,13 +243,14 @@ class TestTrackMatcher:
         assert 0 <= score <= 100, f"Score should be 0-100, got {score}"
     
     def test_featuring_artist_matching(self, matcher, temp_dir):
-        track = Track(
+        track = LibraryTrack(
+            track_id=2002,
             name="Test Song",
             artist="Test Artist feat. Guest",
             album="Test Album",
-            duration=180.5,
+            total_time=180500,
             size=5242880,
-            location=Path("/original/path/test.m4a")
+            location="file:///original/path/test.m4a"
         )
         candidate = FileCandidate(
             path=temp_dir / "Test Artist" / "Test Album" / "Test Song.m4a",
@@ -258,13 +261,14 @@ class TestTrackMatcher:
         assert 0 <= score <= 100, f"Score should be 0-100, got {score}"
     
     def test_exact_match_requirements(self, matcher):
-        track = Track(
+        track = LibraryTrack(
+            track_id=2003,
             name="Song",
             artist="Artist",
             album="Album",
-            duration=180.0,
+            total_time=180000,
             size=5000000,
-            location=Path("/path/test.m4a")
+            location="file:///path/test.m4a"
         )
         candidate = FileCandidate(
             path=Path("/Artist/Album/Song.m4a"),

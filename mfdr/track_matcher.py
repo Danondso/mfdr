@@ -8,7 +8,7 @@ from pathlib import Path
 from fuzzywuzzy import fuzz
 import re
 
-from .apple_music import Track
+from .library_xml_parser import LibraryTrack
 from .file_manager import FileCandidate
 from .completeness_checker import CompletenessChecker
 
@@ -52,7 +52,7 @@ class TrackMatcher:
         self.min_score_without_artist = 35  # For showing recommendations (reduced from 50)
         self.auto_replace_threshold = 75  # High threshold for automatic replacement (reduced from 85)
     
-    def find_best_match(self, track: Track, candidates: List[FileCandidate]) -> Optional[FileCandidate]:
+    def find_best_match(self, track: LibraryTrack, candidates: List[FileCandidate]) -> Optional[FileCandidate]:
         """Find the best matching candidate for a track"""
         if not candidates:
             return None
@@ -82,7 +82,7 @@ class TrackMatcher:
             logger.warning(f"Best match score {best_score} below threshold {min_threshold}")
             return None
     
-    def is_auto_replace_candidate(self, track: Track, candidate: FileCandidate) -> Tuple[bool, int, Dict]:
+    def is_auto_replace_candidate(self, track: LibraryTrack, candidate: FileCandidate) -> Tuple[bool, int, Dict]:
         """
         Determine if a candidate is suitable for automatic replacement (90+ score)
         
@@ -99,7 +99,7 @@ class TrackMatcher:
         
         return is_suitable, score, details
     
-    def _score_candidate(self, track: Track, candidate: FileCandidate) -> Tuple[int, Dict]:
+    def _score_candidate(self, track: LibraryTrack, candidate: FileCandidate) -> Tuple[int, Dict]:
         """Score a candidate file against a track (returns percentage 0-100)"""
         score = 0
         details = {
@@ -129,8 +129,8 @@ class TrackMatcher:
                 details['components']['close_size'] = self.weights['close_size']
         
         # 2. DURATION MATCHING
-        if track.duration and candidate.duration:
-            duration_diff = abs(track.duration - candidate.duration)
+        if track.duration_seconds and candidate.duration:
+            duration_diff = abs(track.duration_seconds - candidate.duration)
             if duration_diff <= 1.0:
                 score += self.weights['exact_duration']
                 details['components']['exact_duration'] = self.weights['exact_duration']
@@ -261,7 +261,7 @@ class TrackMatcher:
         
         return text
     
-    def get_match_candidates_with_scores(self, track: Track, candidates: List[FileCandidate]) -> List[Tuple[FileCandidate, int, Dict]]:
+    def get_match_candidates_with_scores(self, track: LibraryTrack, candidates: List[FileCandidate]) -> List[Tuple[FileCandidate, int, Dict]]:
         """Get all candidates with their scores for manual review"""
         scored_candidates = []
         

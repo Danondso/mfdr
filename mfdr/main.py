@@ -1,805 +1,844 @@
 #!/usr/bin/env python3
 """
-Apple Music Manager - Main CLI interface with Rich UI
+Main CLI for Apple Music Library Manager
 """
 
 import click
 import logging
-import json
-from typing import Optional
-from pathlib import Path
-from rich.console import Console
-from rich.logging import RichHandler
-from rich.table import Table
-from rich.panel import Panel
-from rich.progress import Progress, SpinnerColumn, TextColumn, BarColumn, TaskProgressColumn, TimeRemainingColumn, MofNCompleteColumn
-from rich.layout import Layout
-from rich.live import Live
-from rich.text import Text
-from rich.rule import Rule
-from rich.theme import Theme
+import sys
 import time
+import json
+from pathlib import Path
+from typing import Optional, List, Tuple
+from datetime import datetime
 
-from .apple_music import AppleMusicLibrary
+from rich.console import Console
+from rich.panel import Panel
+from rich.table import Table
+from rich.progress import Progress, SpinnerColumn, TextColumn, BarColumn, TimeRemainingColumn, MofNCompleteColumn
+from rich.rule import Rule
+from rich import box
+
 from .file_manager import FileManager
 from .track_matcher import TrackMatcher
 from .completeness_checker import CompletenessChecker
+from .library_xml_parser import LibraryXMLParser
+from .apple_music import open_playlist_in_music
 
-# Define custom theme with cohesive color palette
-custom_theme = Theme({
-    "info": "cyan",
-    "success": "green",
-    "warning": "yellow", 
-    "error": "red",
-    "highlight": "magenta",
-    "muted": "dim white",
-    "track_name": "bold cyan",
-    "artist": "bold magenta",
-    "path": "dim blue",
-    "good": "bold green",
-    "bad": "bold red",
-    "progress": "cyan",
-    "header": "bold blue"
-})
+# Initialize Rich console
+console = Console()
 
-console = Console(theme=custom_theme)
-
-def setup_logging(verbose: bool) -> None:
+# Configure logging
+def setup_logging(verbose: bool = False):
+    """Setup logging configuration"""
     level = logging.DEBUG if verbose else logging.INFO
     logging.basicConfig(
         level=level,
-        format="%(message)s",
-        handlers=[RichHandler(console=console, rich_tracebacks=True, show_path=False)]
+        format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+        handlers=[
+            logging.StreamHandler(sys.stdout)
+        ]
     )
 
-def create_status_panel(title: str, items: dict, style: str = "info") -> Panel:
-    """Create a styled panel with status information"""
-    content = []
-    for key, value in items.items():
-        content.append(f"[bold]{key}:[/bold] {value}")
-    return Panel("\n".join(content), title=title, style=style, expand=False)
+def create_status_panel(title: str, stats: dict, style: str = "cyan") -> Panel:
+    """Create a formatted status panel"""
+    content = "\n".join([f"{k}: {v}" for k, v in stats.items()])
+    return Panel(content, title=title, style=style)
 
-def create_summary_table(title: str, data: dict) -> Table:
-    """Create a styled summary table"""
-    table = Table(title=title, show_header=True, header_style="bold magenta")
-    table.add_column("Metric", style="cyan", no_wrap=True)
-    table.add_column("Value", justify="right", style="yellow")
+def create_summary_table(title: str, data: List[Tuple[str, str]]) -> Table:
+    """Create a formatted summary table"""
+    table = Table(title=title, box=box.ROUNDED)
+    table.add_column("Metric", style="cyan")
+    table.add_column("Value", style="green")
     
-    for key, value in data.items():
-        table.add_row(key, str(value))
+    for metric, value in data:
+        table.add_row(metric, str(value))
     
     return table
 
+def format_size(size_bytes: int) -> str:
+    """Format bytes to human readable size"""
+    for unit in ['B', 'KB', 'MB', 'GB', 'TB']:
+        if size_bytes < 1024.0:
+            return f"{size_bytes:.1f} {unit}"
+        size_bytes /= 1024.0
+    return f"{size_bytes:.1f} PB"
+
+def load_checkpoint(checkpoint_file: Path) -> dict:
+    """Load checkpoint data from file"""
+    if checkpoint_file.exists():
+        with open(checkpoint_file, 'r') as f:
+            return json.load(f)
+    return {}
+
+def save_checkpoint(checkpoint_file: Path, data: dict):
+    """Save checkpoint data to file"""
+    with open(checkpoint_file, 'w') as f:
+        json.dump(data, f, indent=2)
+
 @click.group()
-@click.option('--verbose', '-v', is_flag=True, help='Verbose output')
-@click.pass_context
-def cli(ctx: click.Context, verbose: bool) -> None:
-    """🎵 Apple Music Library Manager - Find missing tracks and verify completeness"""
-    ctx.ensure_object(dict)
-    ctx.obj['verbose'] = verbose
+@click.option('--verbose', '-v', is_flag=True, help='Enable verbose output')
+def cli(verbose: bool):
+    """Apple Music Library Manager - XML-based library scanning and management"""
     setup_logging(verbose)
     
     # Show welcome header
-    console.print(Rule("🎵 Apple Music Library Manager", style="header"))
+    console.print(Rule("🎵 Apple Music Library Manager", style="bold cyan"))
 
 @cli.command()
-@click.option('--search-dir', '-s', type=click.Path(exists=True, path_type=Path), 
-              help='Directory to search for missing tracks')
-@click.option('--dry-run', '-dr', is_flag=True, help='Show what would be done without making changes')
-@click.option('--limit', '-l', type=int, help='Limit number of tracks to process (for testing)')
-@click.option('--log-file', type=click.Path(path_type=Path), help='Log file path')
-@click.option('--resume-from', '-r', type=str, help='Resume from specific track (format: "Artist - Track Name")')
-@click.option('--quarantine-processed', '-q', is_flag=True, help='Quarantine processed corrupted tracks (only after replacement)')
-@click.pass_context
-def scan(ctx: click.Context, search_dir: Optional[Path], dry_run: bool, 
-         limit: Optional[int], log_file: Optional[Path], resume_from: Optional[str], quarantine_processed: bool) -> None:
-    """Scan Apple Music library for missing tracks"""
+@click.argument('path', type=click.Path(exists=True, path_type=Path))
+@click.option('--mode', '-m', type=click.Choice(['auto', 'xml', 'dir']), default='auto',
+              help='Scan mode: auto (detect from input), xml (Library.xml), or dir (directory)')
+# Common options for both modes
+@click.option('--quarantine', '-q', is_flag=True, 
+              help='Quarantine corrupted files')
+@click.option('--fast', '-f', is_flag=True, 
+              help='Fast scan mode (basic checks only)')
+@click.option('--dry-run', '-dr', is_flag=True, 
+              help='Preview changes without making them')
+@click.option('--limit', '-l', type=int, 
+              help='Limit number of files/tracks to process')
+@click.option('--checkpoint', is_flag=True, 
+              help='Enable checkpoint/resume for large scans')
+@click.option('--verbose', '-v', is_flag=True,
+              help='Show detailed information')
+# XML mode specific options
+@click.option('--missing-only', is_flag=True, 
+              help='[XML mode] Only check for missing tracks (skip corruption check)')
+@click.option('--replace', '-r', is_flag=True, 
+              help='[XML mode] Automatically copy found tracks to auto-add folder')
+@click.option('--search-dir', '-s', type=click.Path(exists=True, path_type=Path),
+              help='[XML mode] Directory to search for replacements')
+@click.option('--auto-add-dir', type=click.Path(path_type=Path),
+              help='[XML mode] Override auto-add directory (auto-detected by default)')
+@click.option('--playlist', '-p', type=click.Path(path_type=Path),
+              help='[XML mode] Create M3U playlist of missing tracks')
+@click.option('--no-open', is_flag=True,
+              help='[XML mode] Do not open M3U playlist in Apple Music after creation')
+# Directory mode specific options  
+@click.option('--recursive', is_flag=True, default=True,
+              help='[Dir mode] Search subdirectories recursively')
+@click.option('--quarantine-dir', type=click.Path(path_type=Path),
+              help='[Dir mode] Custom quarantine directory path')
+@click.option('--checkpoint-interval', type=int, default=100,
+              help='[Dir mode] Save progress every N files (default: 100)')
+@click.option('--resume', is_flag=True,
+              help='[Dir mode] Resume from last checkpoint')
+def scan(path: Path, mode: str, quarantine: bool, fast: bool, dry_run: bool,
+         limit: Optional[int], checkpoint: bool, verbose: bool,
+         missing_only: bool, replace: bool, search_dir: Optional[Path], 
+         auto_add_dir: Optional[Path], playlist: Optional[Path], no_open: bool,
+         recursive: bool, quarantine_dir: Optional[Path], 
+         checkpoint_interval: int, resume: bool) -> None:
+    """Scan for missing and corrupted tracks in Library.xml or directories
     
-    if not search_dir:
-        search_dir = Path.home() / "Music"
+    Examples:
     
-    if log_file:
-        file_handler = logging.FileHandler(log_file)
-        file_handler.setFormatter(logging.Formatter('%(asctime)s - %(levelname)s - %(message)s'))
-        logging.getLogger().addHandler(file_handler)
+        # XML Mode - Check for missing and corrupted tracks
+        mfdr scan Library.xml
+        mfdr scan --mode=xml Library.xml
+        
+        # XML Mode - Only check for missing tracks (faster)
+        mfdr scan Library.xml --missing-only
+        
+        # XML Mode - Find and auto-copy replacements for missing tracks
+        mfdr scan Library.xml --missing-only --replace -s /Volumes/Backup
+        
+        # Directory Mode - Scan folder for corrupted files
+        mfdr scan /path/to/music --quarantine
+        mfdr scan --mode=dir /path/to/music --fast
+        
+        # Directory Mode - Resume interrupted scan
+        mfdr scan /path/to/music --resume
+    """
     
-    # Display configuration panel
+    # Auto-detect mode if needed
+    if mode == 'auto':
+        if path.suffix.lower() == '.xml':
+            mode = 'xml'
+        elif path.is_dir():
+            mode = 'dir'
+        else:
+            console.print("[error]❌ Cannot auto-detect mode. Please specify --mode=xml or --mode=dir[/error]")
+            return
+    
+    # Validate mode-specific options
+    if mode == 'dir':
+        if any([missing_only, replace, search_dir, auto_add_dir, playlist]):
+            console.print("[warning]⚠️  XML-specific options ignored in directory mode[/warning]")
+    elif mode == 'xml':
+        if any([recursive, quarantine_dir, checkpoint_interval, resume]):
+            console.print("[warning]⚠️  Directory-specific options ignored in XML mode[/warning]")
+    
+    # Route to appropriate handler
+    if mode == 'xml':
+        _scan_xml(path, missing_only, replace, search_dir, quarantine, checkpoint,
+                  fast, dry_run, limit, auto_add_dir, verbose, playlist, no_open)
+    else:
+        _scan_directory(path, dry_run, limit, recursive, quarantine_dir, fast,
+                       checkpoint_interval, resume, quarantine)
+
+def _scan_xml(xml_path: Path, missing_only: bool, replace: bool,
+              search_dir: Optional[Path], quarantine: bool, checkpoint: bool,
+              fast: bool, dry_run: bool, limit: Optional[int], auto_add_dir: Optional[Path],
+              verbose: bool, playlist: Optional[Path], no_open: bool) -> None:
+    """Handle XML mode scanning"""
+    
+    # Display configuration
     config = {
-        "Search Directory": str(search_dir),
-        "Mode": "Dry Run" if dry_run else "Live",
-        "Track Limit": str(limit) if limit else "All",
-        "Resume From": resume_from if resume_from else "Beginning"
+        "Mode": "XML Library Scan",
+        "XML File": str(xml_path),
+        "Scan Type": "Missing only" if missing_only else "Full scan (missing + corruption)",
+        "Search Directory": str(search_dir) if search_dir else "Not specified",
+        "Replace": "Yes" if replace else "No",
+        "Quarantine": "Yes" if quarantine else "No",
+        "Dry Run": "Yes" if dry_run else "No",
+        "Limit": str(limit) if limit else "All tracks"
     }
-    console.print(create_status_panel("Scan Configuration", config, "info"))
+    console.print(create_status_panel("Scan Configuration", config, "cyan"))
     console.print()
     
     try:
         # Initialize components
-        with console.status("[bold cyan]Initializing components...", spinner="dots"):
-            apple_music = AppleMusicLibrary()
-            file_manager = FileManager(search_dir)
-            track_matcher = TrackMatcher()
-            quarantine_dir = Path("quarantine")
-            completeness_checker = CompletenessChecker(quarantine_dir)
+        track_matcher = TrackMatcher()
+        file_manager = FileManager(search_dir) if search_dir else None
+        completeness_checker = CompletenessChecker() if not missing_only else None
         
-        # Get tracks from Apple Music with progress
-        console.print(Panel.fit("📊 Loading Apple Music Library", style="header"))
-        tracks = list(apple_music.get_tracks(limit=limit))
-        console.print(f"[success]✅ Loaded {len(tracks)} tracks[/success]\n")
+        # Checkpoint handling
+        checkpoint_file = Path("scan_checkpoint.json") if checkpoint else None
+        checkpoint_data = load_checkpoint(checkpoint_file) if checkpoint_file else {}
+        last_processed = checkpoint_data.get("last_processed", 0)
         
-        # Index available files with progress
-        console.print(Panel.fit("📂 Indexing Music Files", style="header"))
-        file_manager.index_files()
-        console.print(f"[success]✅ Indexing complete[/success]\n")
+        # Load Library.xml
+        console.print(Panel.fit("📚 Loading Library.xml", style="bold cyan"))
+        parser = LibraryXMLParser(xml_path)
         
-        missing_count = 0
-        found_count = 0
-        corrupted_count = 0
-        current_track = None
-        skip_until_resume = bool(resume_from)
-        processed_count = 0
+        with console.status("[bold cyan]Parsing XML file...", spinner="dots"):
+            tracks = parser.parse()
+            if limit:
+                tracks = tracks[:limit]
         
-        start_time = time.time()
+        console.print(f"[success]✅ Loaded {len(tracks)} tracks[/success]")
+        console.print()
         
-        # Create progress bar
+        # Auto-detect auto-add directory if not specified
+        if replace and not auto_add_dir:
+            auto_add_dir = Path.home() / "Music" / "iTunes" / "iTunes Media" / "Automatically Add to Music.localized"
+            if not auto_add_dir.exists():
+                auto_add_dir = Path.home() / "Music" / "iTunes" / "iTunes Media" / "Automatically Add to iTunes.localized"
+            
+            if auto_add_dir.exists():
+                console.print(f"[info]📁 Auto-add directory: {auto_add_dir}[/info]")
+                console.print()
+            else:
+                console.print("[error]❌ Could not find auto-add directory. Please specify with --auto-add-dir[/error]")
+                return
+        
+        # Index files if search directory provided
+        if search_dir and file_manager:
+            console.print(Panel.fit("📂 Indexing Music Files", style="bold cyan"))
+            
+            with console.status("[bold cyan]Indexing files...", spinner="dots"):
+                start_time = time.time()
+                file_manager.index_files()
+                index_time = time.time() - start_time
+            
+            console.print(f"[success]✅ Indexed {len(file_manager.file_index)} files in {index_time:.1f}s[/success]")
+            console.print()
+        
+        # Process tracks
+        console.print(Panel.fit("🔍 Scanning Tracks", style="bold cyan"))
+        
+        missing_tracks = []
+        corrupted_tracks = []
+        replaced_tracks = []
+        quarantined_tracks = []
+        
+        # Resume from checkpoint if enabled
+        start_idx = last_processed if checkpoint and last_processed < len(tracks) else 0
+        
         with Progress(
             SpinnerColumn(),
             TextColumn("[progress.description]{task.description}"),
             BarColumn(style="cyan"),
             MofNCompleteColumn(),
             TextColumn("[dim]tracks[/dim]"),
+            TimeRemainingColumn(),
             console=console
         ) as progress:
             
-            scan_task = progress.add_task(
-                "[cyan]Scanning tracks...", 
-                total=len(tracks)
-            )
+            scan_task = progress.add_task("[cyan]Scanning tracks...", total=len(tracks) - start_idx)
             
-            try:
-                for track in tracks:
-                    current_track = f"{track.artist} - {track.name}"
+            for idx, track in enumerate(tracks[start_idx:], start=start_idx):
+                # Check if file exists
+                if not track.file_path or not track.file_path.exists():
+                    missing_tracks.append(track)
                     
-                    # Skip tracks until we reach the resume point
-                    if skip_until_resume:
-                        if current_track == resume_from:
-                            skip_until_resume = False
-                            console.print(f"[warning]🔄 Resuming from: {current_track}[/warning]")
-                        else:
-                            progress.advance(scan_task)
-                            continue
-                    
-                    processed_count += 1
-                    progress.update(scan_task, description=f"[cyan]Processing: {track.name[:30]}...")
-                    
-                    # Check if the track file is corrupted
-                    is_corrupted = False
-                    corruption_details = None
-                    
-                    if track.location and track.location.exists():
-                        is_complete, completeness_details = completeness_checker.check_file(track.location, track)
-                        if not is_complete:
-                            is_corrupted = True
-                            corrupted_count += 1
-                            corruption_details = completeness_details
-                            reason = completeness_details.get('error', completeness_details.get('quarantine_reason', ''))
-                            if not reason and completeness_details.get('checks_failed'):
-                                reason = ", ".join(completeness_details['checks_failed'][:2])
-                            
-                            # Create warning panel for corrupted file
-                            console.print(Panel(
-                                f"[artist]{track.artist}[/artist] - [track_name]{track.name}[/track_name]\n"
-                                f"[error]Reason: {reason}[/error]",
-                                title="🚨 Corrupted Track",
-                                style="error",
-                                expand=False
-                            ))
-                    
-                    # Process corrupted tracks OR missing tracks
-                    if is_corrupted or track.is_missing():
-                        missing_count += 1
-                        
-                        # Search for the track
+                    # Search for replacement if requested
+                    if search_dir and file_manager:
                         candidates = file_manager.search_files(track)
+                        
                         if candidates:
-                            found_replacement = False
+                            # Score and find best match
+                            scored_candidates = track_matcher.get_match_candidates_with_scores(track, candidates)
                             
-                            for i, candidate in enumerate(candidates[:10]):
-                                is_complete, completeness_details = completeness_checker.check_file(candidate.path, track)
+                            if scored_candidates:
+                                best_match, score, details = scored_candidates[0]
                                 
-                                if completeness_details.get('needs_quarantine') and not dry_run:
-                                    reason = completeness_details.get('quarantine_reason', 'Completeness check failed')
-                                    quarantined = completeness_checker.quarantine_file(candidate.path, reason)
-                                    if quarantined:
-                                        console.print(f"[warning]📦 Quarantined: {candidate.filename}[/warning]")
-                                    continue
-                                
-                                if is_complete:
-                                    is_auto_replace, score, details = track_matcher.is_auto_replace_candidate(track, candidate)
+                                if score >= 90 and replace and not dry_run:
+                                    # Copy to auto-add folder
+                                    import shutil
+                                    dest = auto_add_dir / best_match.path.name
                                     
-                                    found_count += 1
-                                    found_replacement = True
+                                    # Security check: Ensure destination is within auto-add directory
+                                    dest_resolved = dest.resolve(strict=False)
+                                    auto_add_resolved = auto_add_dir.resolve()
                                     
-                                    if is_auto_replace:
-                                        console.print(Panel(
-                                            f"[success]✅ Found replacement[/success]\n"
-                                            f"File: [path]{candidate.filename}[/path]\n"
-                                            f"Score: [highlight]{score}[/highlight]",
-                                            title="Auto-Replace Candidate",
-                                            style="success",
-                                            expand=False
-                                        ))
-                                        
-                                        if not dry_run and quarantine_processed and is_corrupted and track.location:
-                                            reason = "Replaced with better copy"
-                                            quarantined = completeness_checker.quarantine_file(track.location, reason)
-                                            if quarantined:
-                                                console.print(f"[warning]📦 Quarantined original[/warning]")
-                                    else:
-                                        if i == 0:
-                                            console.print(f"[info]💡 Manual review needed: {candidate.filename} (score: {score})[/info]")
-                                    break
-                            
-                            if not found_replacement:
-                                console.print(f"[error]❌ No complete replacements found[/error]")
-                        else:
-                            console.print(f"[muted]🔍 No candidates found for: {track.artist} - {track.name}[/muted]")
+                                    try:
+                                        dest_resolved.relative_to(auto_add_resolved)
+                                    except ValueError:
+                                        # Path traversal attempt detected
+                                        raise ValueError(f"Security error: Destination path '{dest}' is outside the auto-add directory")
+                                    
+                                    try:
+                                        shutil.copy2(best_match.path, dest)
+                                        replaced_tracks.append((track, best_match, score))
+                                        console.print(f"[success]✅ Replaced: {track.artist} - {track.name}[/success]")
+                                        # Show relative path if available
+                                        display_path = best_match.path.name
+                                        if search_dir:
+                                            try:
+                                                display_path = str(best_match.path.relative_to(search_dir))
+                                            except ValueError:
+                                                pass
+                                        console.print(f"   [dim]→ Using: {display_path} (score: {score})[/dim]")
+                                    except Exception as e:
+                                        console.print(f"[error]❌ Failed to copy: {e}[/error]")
+                                elif score >= 90 and replace and dry_run:
+                                    replaced_tracks.append((track, best_match, score))
+                                    console.print(f"[info]Would replace: {track.artist} - {track.name}[/info]")
+                                    # Show relative path if available
+                                    display_path = best_match.path.name
+                                    if search_dir:
+                                        try:
+                                            display_path = str(best_match.path.relative_to(search_dir))
+                                        except ValueError:
+                                            pass
+                                    console.print(f"   [dim]→ Using: {display_path} (score: {score})[/dim]")
+                                    if verbose and 'components' in details:
+                                        console.print(f"   [dim]  Match details: {', '.join(f'{k}={v}' for k, v in details['components'].items() if v > 0)}[/dim]")
+                
+                elif not missing_only:
+                    # Check for corruption
+                    if fast:
+                        is_good, details = completeness_checker.fast_corruption_check(track.file_path)
+                    else:
+                        is_good, details = completeness_checker.check_file(track.file_path)
                     
-                    progress.advance(scan_task)
-            
-            except KeyboardInterrupt:
-                console.print(Panel(
-                    f"Scan interrupted at: [track_name]{current_track}[/track_name]\n\n"
-                    f"To resume, use: [info]--resume-from \"{current_track}\"[/info]",
-                    title="⏸️  Paused",
-                    style="warning"
-                ))
-                # Graceful exit after showing resume instructions
-                return
-            except Exception as e:
-                if current_track:
-                    console.print(Panel(
-                        f"Error at: [track_name]{current_track}[/track_name]\n"
-                        f"Error: [error]{e}[/error]\n\n"
-                        f"To resume, use: [info]--resume-from \"{current_track}\"[/info]",
-                        title="💥 Error",
-                        style="error"
-                    ))
-                raise
+                    if not is_good:
+                        corrupted_tracks.append((track, details))
+                        
+                        if quarantine and not dry_run:
+                            try:
+                                reason = details.get("reason", "corrupted")
+                                quarantined_path = completeness_checker.quarantine_file(track.file_path, reason)
+                                quarantined_tracks.append((track, quarantined_path))
+                                console.print(f"[warning]📦 Quarantined: {track.artist} - {track.name}[/warning]")
+                            except Exception as e:
+                                console.print(f"[error]❌ Failed to quarantine: {e}[/error]")
+                        elif quarantine and dry_run:
+                            quarantined_tracks.append((track, None))
+                            console.print(f"[info]Would quarantine: {track.artist} - {track.name}[/info]")
+                
+                # Update checkpoint
+                if checkpoint and (idx + 1) % 100 == 0:
+                    save_checkpoint(checkpoint_file, {"last_processed": idx + 1})
+                
+                progress.advance(scan_task)
         
-        # Final summary
-        total_elapsed = time.time() - start_time
-        final_rate = processed_count / total_elapsed if total_elapsed > 0 else 0
+        # Clear checkpoint on completion
+        if checkpoint and checkpoint_file and checkpoint_file.exists():
+            checkpoint_file.unlink()
         
-        summary_data = {
-            "Processed Tracks": processed_count,
-            "Corrupted Tracks": corrupted_count,
-            "Missing Tracks": missing_count,
-            "Found Matches": found_count,
-            "Processing Time": f"{total_elapsed:.1f}s",
-            "Average Rate": f"{final_rate:.1f} tracks/s"
-        }
-        
+        # Display results
         console.print()
-        console.print(create_summary_table("📊 Scan Summary", summary_data))
+        console.print()
+        console.print(Rule("📊 Scan Results", style="bold cyan"))
         
+        # Summary statistics
+        summary_data = [
+            ("Total Tracks", f"{len(tracks):,}"),
+            ("Missing Tracks", f"{len(missing_tracks):,}"),
+            ("Corrupted Tracks", f"{len(corrupted_tracks):,}"),
+            ("Replaced Tracks", f"{len(replaced_tracks):,}"),
+            ("Quarantined Tracks", f"{len(quarantined_tracks):,}")
+        ]
+        
+        console.print(create_summary_table("Summary", summary_data))
+        
+        # Detailed results for missing tracks
+        if missing_tracks and not replace:
+            console.print()
+            console.print("[bold red]Missing Tracks:[/bold red]")
+            for track in missing_tracks[:10]:  # Show first 10
+                console.print(f"  • {track.artist} - {track.name}")
+            if len(missing_tracks) > 10:
+                console.print(f"  ... and {len(missing_tracks) - 10} more")
+        
+        # Detailed results for corrupted tracks
+        if corrupted_tracks and not quarantine:
+            console.print()
+            console.print("[bold yellow]Corrupted Tracks:[/bold yellow]")
+            for track, details in corrupted_tracks[:10]:  # Show first 10
+                reason = details.get("reason", "unknown")
+                console.print(f"  • {track.artist} - {track.name} ({reason})")
+            if len(corrupted_tracks) > 10:
+                console.print(f"  ... and {len(corrupted_tracks) - 10} more")
+        
+        # Generate playlist/report if requested
+        if playlist:
+            try:
+                # Determine format based on extension
+                if playlist.suffix == '.txt' or not playlist.suffix:
+                    # Create text report of missing tracks
+                    report_path = playlist if playlist.suffix == '.txt' else playlist.with_suffix('.txt')
+                    with open(report_path, 'w', encoding='utf-8') as f:
+                        f.write(f"Missing Tracks Report\n")
+                        f.write(f"====================\n")
+                        f.write(f"Source: {xml_path.name}\n")
+                        f.write(f"Generated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
+                        f.write(f"Total missing tracks: {len(missing_tracks)}\n\n")
+                        
+                        for i, track in enumerate(missing_tracks, 1):
+                            f.write(f"{i}. {track.artist} - {track.name}\n")
+                            if track.album:
+                                f.write(f"   Album: {track.album}\n")
+                            if track.file_path:
+                                f.write(f"   Original path: {track.file_path}\n")
+                            f.write("\n")
+                    
+                    console.print()
+                    console.print(f"[success]📝 Created missing tracks report: {report_path}[/success]")
+                    console.print(f"[info]   Contains {len(missing_tracks)} missing tracks[/info]")
+                
+                elif playlist.suffix == '.m3u' and replaced_tracks:
+                    # Create M3U playlist of successfully found/replaced tracks
+                    playlist_path = playlist
+                    with open(playlist_path, 'w', encoding='utf-8') as f:
+                        f.write("#EXTM3U\n")
+                        f.write(f"# Found replacements from {xml_path.name}\n")
+                        f.write(f"# Generated on {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
+                        f.write(f"# Total found tracks: {len(replaced_tracks)}\n\n")
+                        
+                        for track, candidate, score in replaced_tracks:
+                            # Write extended info
+                            duration = int(track.duration_seconds) if track.duration_seconds else -1
+                            f.write(f"#EXTINF:{duration},{track.artist} - {track.name}\n")
+                            # Write the replacement file path
+                            f.write(f"{candidate.path}\n")
+                    
+                    console.print()
+                    console.print(f"[success]📝 Created playlist of found tracks: {playlist_path}[/success]")
+                    console.print(f"[info]   Contains {len(replaced_tracks)} tracks with replacements[/info]")
+                    
+                    # Open playlist in Apple Music unless --no-open is specified
+                    if not no_open:
+                        console.print()
+                        console.print("[info]🎵 Opening playlist in Apple Music...[/info]")
+                        success, error_msg = open_playlist_in_music(playlist_path)
+                        if success:
+                            console.print("[success]✅ Playlist opened in Apple Music[/success]")
+                        else:
+                            console.print(f"[warning]⚠️  Could not open playlist: {error_msg}[/warning]")
+                            console.print("[info]💡 You can manually open the playlist file in Apple Music[/info]")
+                
+                elif playlist.suffix == '.m3u' and missing_tracks:
+                    console.print()
+                    console.print(f"[warning]⚠️  No replacements found to create playlist[/warning]")
+                    console.print(f"[info]💡 Use .txt extension to create a report of missing tracks instead[/info]")
+                    
+            except Exception as e:
+                console.print()
+                console.print(f"[error]❌ Failed to create playlist/report: {e}[/error]")
+        
+        # Tips
+        if missing_tracks and not search_dir:
+            console.print()
+            console.print("[info]💡 Tip: Use -s/--search-dir to search for replacements[/info]")
+        if corrupted_tracks and not quarantine:
+            console.print()
+            console.print("[info]💡 Tip: Use -q/--quarantine to move corrupted files[/info]")
+        if missing_tracks and not playlist:
+            console.print()
+            console.print("[info]💡 Tip: Use -p/--playlist to create an M3U playlist of missing tracks[/info]")
+        
+    except KeyboardInterrupt:
+        console.print()
+        console.print("[warning]⚠️  Scan interrupted by user[/warning]")
+        if checkpoint:
+            console.print(f"[info]💾 Progress saved. Resume with --checkpoint[/info]")
+        sys.exit(1)
     except Exception as e:
         console.print(f"[error]❌ Error: {e}[/error]")
         raise click.ClickException(str(e))
 
-@cli.command()
-@click.argument('path', type=click.Path(exists=True, path_type=Path))
-@click.option('--quarantine', '-q', is_flag=True, help='Move bad files to quarantine')
-@click.option('--verbose', '-v', is_flag=True, help='Show detailed results')
-def check(path: Path, quarantine: bool, verbose: bool) -> None:
-    """Check audio file(s) for completeness"""
+def _scan_directory(directory: Path, dry_run: bool, limit: Optional[int], 
+                   recursive: bool, quarantine_dir: Optional[Path], fast_scan: bool,
+                   checkpoint_interval: int, resume: bool, quarantine: bool) -> None:
+    """Handle directory mode scanning (formerly qscan)"""
     
-    checker = CompletenessChecker()
-    audio_extensions = {'.mp3', '.m4a', '.m4p', '.aac', '.flac', '.wav', '.ogg'}
+    # Display configuration
+    config = {
+        "Mode": "Directory Scan",
+        "Directory": str(directory),
+        "Scan Type": "Fast (end check only)" if fast_scan else "Full validation",
+        "Recursive": "Yes" if recursive else "No",
+        "File Limit": str(limit) if limit else "None",
+        "Checkpoint Interval": f"Every {checkpoint_interval} files",
+        "Quarantine": "Yes" if quarantine else "No",
+        "Dry Run": "Yes" if dry_run else "No"
+    }
     
-    if path.is_file():
-        # Single file check
-        console.print(Panel.fit(f"🎵 Checking: {path.name}", style="header"))
-        is_good, details = checker.check_file(path)
-        
-        # Create detailed status panel
-        status_items = {}
-        if is_good:
-            status_items["Status"] = "[good]✅ GOOD[/good]"
-            panel_style = "success"
+    if quarantine_dir:
+        config["Quarantine Directory"] = str(quarantine_dir)
+    
+    console.print(create_status_panel("Scan Configuration", config, "cyan"))
+    console.print()
+    
+    # Initialize checker
+    checker = CompletenessChecker(quarantine_dir=quarantine_dir)
+    
+    # Checkpoint file path
+    checkpoint_file = directory / ".scan_checkpoint.json"
+    processed_files = set()
+    stats = {
+        "total_checked": 0,
+        "corrupted": 0,
+        "quarantined": 0,
+        "errors": 0
+    }
+    
+    # Load checkpoint if resuming
+    if resume and checkpoint_file.exists():
+        try:
+            with open(checkpoint_file, 'r') as f:
+                checkpoint_data = json.load(f)
+                processed_files = set(checkpoint_data.get("processed_files", []))
+                stats = checkpoint_data.get("stats", stats)
+                console.print(f"[info]📥 Resumed from checkpoint: {len(processed_files)} files already processed[/info]")
+                console.print()
+        except Exception as e:
+            console.print(f"[warning]⚠️  Failed to load checkpoint: {e}[/warning]")
+            console.print()
+    
+    # Find audio files
+    audio_extensions = {'.mp3', '.m4a', '.m4p', '.aac', '.flac', '.wav', '.ogg', '.opus'}
+    audio_files = []
+    
+    console.print(Panel.fit("🔍 Finding Audio Files", style="bold cyan"))
+    
+    with console.status("[cyan]Scanning directory...", spinner="dots"):
+        if recursive:
+            for ext in audio_extensions:
+                audio_files.extend(directory.rglob(f"*{ext}"))
         else:
-            status_items["Status"] = "[bad]❌ BAD[/bad]"
-            panel_style = "error"
+            for ext in audio_extensions:
+                audio_files.extend(directory.glob(f"*{ext}"))
         
-        if details.get('checks_passed'):
-            status_items["Passed Checks"] = ", ".join(details['checks_passed'])
-        if details.get('checks_failed'):
-            status_items["Failed Checks"] = ", ".join(details['checks_failed'])
+        # Filter out already processed files
+        audio_files = [f for f in audio_files if str(f) not in processed_files]
         
-        console.print(create_status_panel(path.name, status_items, panel_style))
-        
-        if quarantine and not is_good:
-            reason = details.get('quarantine_reason', 'corrupted')
-            if checker.quarantine_file(path, reason):
-                console.print(f"[warning]📦 Quarantined to: {checker.quarantine_dir / reason}/[/warning]")
+        if limit and len(audio_files) > limit:
+            audio_files = audio_files[:limit]
     
-    else:
-        # Directory check
-        console.print(Panel.fit(f"📁 Checking Directory: {path}", style="header"))
-        
-        # Find audio files
-        audio_files = []
-        for ext in audio_extensions:
-            audio_files.extend(path.rglob(f"*{ext}"))
-        
-        if not audio_files:
-            console.print("[warning]⚠️  No audio files found[/warning]")
-            return
-        
-        console.print(f"[info]🎵 Found {len(audio_files)} files[/info]\n")
-        
-        # Check files with progress
-        good = 0
-        bad = 0
-        bad_files = []
-        
+    if not audio_files:
+        console.print("[warning]⚠️  No audio files found to process[/warning]")
+        return
+    
+    console.print(f"[success]✅ Found {len(audio_files)} files to check[/success]")
+    console.print()
+    
+    # Process files
+    console.print(Panel.fit("🔍 Checking Files", style="bold cyan"))
+    
+    corrupted_files = []
+    
+    def save_checkpoint():
+        """Save current progress to checkpoint file"""
+        checkpoint_data = {
+            "processed_files": list(processed_files),
+            "stats": stats,
+            "timestamp": datetime.now().isoformat()
+        }
+        with open(checkpoint_file, 'w') as f:
+            json.dump(checkpoint_data, f, indent=2)
+    
+    try:
         with Progress(
             SpinnerColumn(),
             TextColumn("[progress.description]{task.description}"),
             BarColumn(style="cyan"),
             MofNCompleteColumn(),
             TextColumn("[dim]files[/dim]"),
+            TimeRemainingColumn(),
             console=console
         ) as progress:
             
             check_task = progress.add_task("[cyan]Checking files...", total=len(audio_files))
             
-            for file_path in audio_files:
-                is_good_file, details = checker.check_file(file_path)
-                
-                if is_good_file:
-                    good += 1
-                    if verbose:
-                        console.print(f"[good]✅[/good] {file_path.name}")
-                else:
-                    bad += 1
-                    bad_files.append((file_path, details))
-                    reason = details.get('error', details.get('quarantine_reason', ''))
-                    console.print(f"[bad]❌[/bad] {file_path.name} - [error]{reason}[/error]")
-                    
-                    if quarantine:
-                        reason = details.get('quarantine_reason', 'corrupted')
-                        if checker.quarantine_file(file_path, reason):
-                            console.print(f"   [warning]📦 Quarantined[/warning]")
-                
-                progress.advance(check_task)
-        
-        # Summary
-        summary_data = {
-            "✅ Good": good,
-            "❌ Bad": bad,
-            "Total": good + bad
-        }
-        
-        console.print()
-        console.print(create_summary_table("Summary", summary_data))
-        
-        if bad > 0 and not quarantine:
-            console.print("\n[info]💡 Tip: Use --quarantine to move bad files[/info]")
-
-@cli.command()
-@click.argument('directory', type=click.Path(exists=True, path_type=Path))
-@click.option('--dry-run', '-dr', is_flag=True, help='Show what would be quarantined without moving files')
-@click.option('--limit', '-l', type=int, help='Limit number of files to check')
-@click.option('--recursive', '-r', is_flag=True, default=True, help='Search subdirectories recursively')
-@click.option('--quarantine-dir', '-q', type=click.Path(path_type=Path), help='Custom quarantine directory path')
-@click.option('--fast-scan', '-f', is_flag=True, help='Fast scan mode - only check file endings')
-@click.option('--checkpoint-interval', '-c', type=int, default=100, help='Save progress every N files (default: 100)')
-@click.option('--resume', is_flag=True, help='Resume from last checkpoint')
-@click.pass_context
-def qscan(ctx: click.Context, directory: Path, dry_run: bool, limit: Optional[int], 
-         recursive: bool, quarantine_dir: Optional[Path], fast_scan: bool,
-         checkpoint_interval: int, resume: bool) -> None:
-    """Quick scan directory for corrupted files"""
-    
-    if quarantine_dir:
-        quarantine_path = quarantine_dir
-    else:
-        quarantine_path = Path("quarantine")
-    
-    # Display configuration
-    config = {
-        "Target Directory": str(directory),
-        "Quarantine Directory": str(quarantine_path),
-        "Mode": "Dry Run" if dry_run else "Live",
-        "Scan Type": "Fast" if fast_scan else "Full",
-        "Recursive": "Yes" if recursive else "No",
-        "Checkpoint Interval": f"{checkpoint_interval} files",
-        "Resume Mode": "Yes" if resume else "No"
-    }
-    console.print(create_status_panel("Quick Scan Configuration", config, "info"))
-    console.print()
-    
-    # Checkpoint file path
-    checkpoint_file = Path(".qscan_checkpoint.json")
-    
-    try:
-        completeness_checker = CompletenessChecker(quarantine_path)
-        
-        # Audio file extensions to check
-        audio_extensions = {'.mp3', '.m4a', '.aac', '.flac', '.wav', '.ogg', '.mp4'}
-        
-        # Find all audio files
-        with console.status("[bold cyan]Finding audio files...", spinner="dots"):
-            audio_files = []
-            
-            if recursive:
-                for ext in audio_extensions:
-                    audio_files.extend(directory.rglob(f"*{ext}"))
-            else:
-                for ext in audio_extensions:
-                    audio_files.extend(directory.glob(f"*{ext}"))
-            
-            # Sort files for consistent ordering
-            audio_files.sort()
-            
-            if limit:
-                audio_files = audio_files[:limit]
-        
-        console.print(f"[success]🎵 Found {len(audio_files)} audio files[/success]\n")
-        
-        if not audio_files:
-            console.print("[warning]ℹ️ No audio files found[/warning]")
-            return
-        
-        # Load checkpoint if resuming - store as strings to avoid duplicate Path creation
-        skip_files_str = set()
-        if resume and checkpoint_file.exists():
-            try:
-                with open(checkpoint_file) as f:
-                    checkpoint_data = json.load(f)
-                    if checkpoint_data.get('directory') == str(directory):
-                        skip_files_str = set(checkpoint_data.get('processed_files', []))
-                        stats = checkpoint_data.get('stats', {})
-                        console.print(f"[info]📌 Resuming from checkpoint: {len(skip_files_str)} files already processed[/info]")
-                        if stats:
-                            console.print(f"[dim]   Previous stats: {stats.get('corrupted', 0)} corrupted, {stats.get('quarantined', 0)} quarantined[/dim]")
-                        console.print()
-                    else:
-                        console.print("[warning]⚠️ Checkpoint is for different directory, starting fresh[/warning]\n")
-            except Exception as e:
-                console.print(f"[warning]⚠️ Could not load checkpoint: {e}[/warning]\n")
-        elif resume:
-            console.print("[info]ℹ️ No checkpoint found, starting fresh scan[/info]\n")
-        
-        # Statistics
-        checked_count = len(skip_files_str)
-        corrupted_count = 0
-        quarantined_count = 0
-        error_count = 0
-        processed_files = list(skip_files_str)  # Keep as strings
-        
-        start_time = time.time()
-        last_checkpoint_save = 0
-        
-        # Process files with progress
-        with Progress(
-            SpinnerColumn(),
-            TextColumn("[progress.description]{task.description}"),
-            BarColumn(style="cyan"),
-            MofNCompleteColumn(),
-            TextColumn("[dim]files[/dim]"),
-            console=console
-        ) as progress:
-            
-            scan_task = progress.add_task("[cyan]Scanning files...", total=len(audio_files))
-            
-            # Skip already processed files in progress bar
-            if skip_files_str:
-                progress.advance(scan_task, len(skip_files_str))
-            
-            for file_path in audio_files:
-                # Skip if already processed (compare as strings)
-                if str(file_path) in skip_files_str:
-                    continue
-                checked_count += 1
-                
+            for i, file_path in enumerate(audio_files):
                 try:
                     # Check file
                     if fast_scan:
-                        is_complete, details = completeness_checker.fast_corruption_check(file_path)
+                        is_good, details = checker.fast_corruption_check(file_path)
                     else:
-                        is_complete, details = completeness_checker.check_file(file_path)
+                        is_good, details = checker.check_file(file_path)
                     
-                    if not is_complete:
-                        corrupted_count += 1
+                    stats["total_checked"] += 1
+                    
+                    if not is_good:
+                        stats["corrupted"] += 1
+                        corrupted_files.append((file_path, details))
                         
-                        # Determine quarantine reason - use specific reason from checker if available
-                        if details.get('quarantine_reason'):
-                            reason = details['quarantine_reason']
-                        elif details.get('ffmpeg_seek_error'):
-                            reason = "ffmpeg_seek_failure"
-                        elif not details.get('has_metadata'):
-                            reason = "no_metadata"
-                        elif not details.get('audio_integrity'):
-                            reason = "audio_integrity_failure"
-                        else:
-                            reason = "general_corruption"
-                        
-                        display_reason = details.get('error', details.get('quarantine_reason', ''))
-                        if not display_reason and details.get('checks_failed'):
-                            display_reason = ", ".join(details['checks_failed'][:2])
-                        if not display_reason:
-                            display_reason = reason.replace('_', ' ')
-                        
-                        console.print(f"[error]🚨 CORRUPTED: {file_path.name}[/error] - {display_reason}")
-                        
-                        if dry_run:
-                            console.print(f"   [muted]Would quarantine to: {quarantine_path / reason}[/muted]")
-                        else:
-                            quarantined = completeness_checker.quarantine_file(file_path, reason)
-                            if quarantined:
-                                quarantined_count += 1
-                                console.print(f"   [warning]📦 Quarantined to: {reason}/[/warning]")
-                            else:
-                                error_count += 1
-                                console.print(f"   [error]❌ Failed to quarantine[/error]")
-                    else:
-                        if ctx.obj.get('verbose'):
-                            console.print(f"[good]✅ {file_path.name}[/good]")
-                
+                        # Quarantine if requested
+                        if quarantine and not dry_run:
+                            try:
+                                reason = details.get('reason', 'corrupted')
+                                if checker.quarantine_file(file_path, reason):
+                                    stats["quarantined"] += 1
+                                    progress.console.print(f"[yellow]📦 Quarantined: {file_path.name} → {reason}/[/yellow]")
+                                else:
+                                    stats["errors"] += 1
+                                    progress.console.print(f"[red]❌ Failed to quarantine {file_path.name}[/red]")
+                            except Exception as e:
+                                stats["errors"] += 1
+                                progress.console.print(f"[red]❌ Failed to quarantine {file_path.name}: {e}[/red]")
+                        elif quarantine and dry_run:
+                            progress.console.print(f"[yellow]⚠️  Would quarantine: {file_path.name}[/yellow]")
+                    
                 except Exception as e:
-                    error_count += 1
-                    console.print(f"[error]❌ Error checking {file_path.name}: {e}[/error]")
+                    stats["errors"] += 1
+                    progress.console.print(f"[red]❌ Error checking {file_path.name}: {e}[/red]")
                 
-                # Add to processed files (store as string)
-                processed_files.append(str(file_path))
+                # Mark as processed
+                processed_files.add(str(file_path))
                 
                 # Save checkpoint periodically
-                if checked_count - last_checkpoint_save >= checkpoint_interval:
-                    try:
-                        checkpoint_data = {
-                            'directory': str(directory),
-                            'processed_files': processed_files,  # Already strings
-                            'timestamp': time.time(),
-                            'stats': {
-                                'checked': checked_count,
-                                'corrupted': corrupted_count,
-                                'quarantined': quarantined_count,
-                                'errors': error_count
-                            }
-                        }
-                        with open(checkpoint_file, 'w') as f:
-                            json.dump(checkpoint_data, f, indent=2)
-                        last_checkpoint_save = checked_count
-                        if ctx.obj.get('verbose'):
-                            console.print(f"[dim]💾 Checkpoint saved ({checked_count} files processed)[/dim]")
-                    except Exception as e:
-                        if ctx.obj.get('verbose'):
-                            console.print(f"[dim]⚠️ Could not save checkpoint: {e}[/dim]")
+                if (i + 1) % checkpoint_interval == 0:
+                    save_checkpoint()
                 
-                progress.advance(scan_task)
+                progress.advance(check_task)
         
-        # Final summary
-        total_elapsed = time.time() - start_time
-        final_rate = checked_count / total_elapsed if total_elapsed > 0 else 0
+        # Final checkpoint save
+        save_checkpoint()
         
-        summary_data = {
-            "Files Checked": checked_count,
-            "Corrupted Found": corrupted_count,
-            "Files Quarantined": quarantined_count,
-            "Errors": error_count,
-            "Processing Time": f"{total_elapsed:.1f}s",
-            "Average Rate": f"{final_rate:.1f} files/s"
-        }
-        
-        console.print()
-        console.print(create_summary_table("📊 Scan Summary", summary_data))
-        
-        if corrupted_count > 0 and quarantine_path.exists():
-            console.print("\n[header]📁 Quarantine Directory Structure:[/header]")
-            for subdir in quarantine_path.iterdir():
-                if subdir.is_dir():
-                    file_count = len(list(subdir.glob("*")))
-                    console.print(f"   [info]{subdir.name}:[/info] {file_count} files")
-        
-        # Clean up checkpoint file on successful completion
-        if checkpoint_file.exists():
-            try:
-                checkpoint_file.unlink()
-                console.print("\n[dim]✓ Checkpoint file removed (scan complete)[/dim]")
-            except Exception:
-                pass
+        # Clean up checkpoint if completed successfully
+        if stats["total_checked"] >= len(audio_files):
+            checkpoint_file.unlink(missing_ok=True)
+            console.print()
+            console.print("[success]✅ Scan completed successfully[/success]")
         
     except KeyboardInterrupt:
-        # Save checkpoint on interruption
-        try:
-            checkpoint_data = {
-                'directory': str(directory),
-                'processed_files': processed_files,  # Already strings
-                'timestamp': time.time(),
-                'stats': {
-                    'checked': checked_count,
-                    'corrupted': corrupted_count,
-                    'quarantined': quarantined_count,
-                    'errors': error_count
-                }
-            }
-            with open(checkpoint_file, 'w') as f:
-                json.dump(checkpoint_data, f, indent=2)
-            console.print(Panel(
-                f"[warning]Scan interrupted at file {checked_count} of {len(audio_files)}[/warning]\n\n"
-                f"Progress saved to checkpoint. To resume, run:\n"
-                f"[info]mfdr qscan {directory} --resume[/info]",
-                title="⏸️  Paused",
-                style="warning"
-            ))
-            # Graceful exit after saving checkpoint
-            return
-        except Exception as e:
-            console.print(f"[error]Could not save checkpoint: {e}[/error]")
-            # Still exit gracefully even if checkpoint save failed
-            return
+        console.print()
+        console.print("[warning]⚠️  Scan interrupted[/warning]")
+        save_checkpoint()
+        console.print(f"[info]💾 Progress saved. Use --resume to continue[/info]")
+        return
     
-    except Exception as e:
-        console.print(f"[error]❌ Error: {e}[/error]")
-        raise click.ClickException(str(e))
+    # Display results
+    console.print()
+    console.print("=" * 50)
+    console.print()
+    
+    summary_data = [
+        ("Files Checked", f"{stats['total_checked']:,}"),
+        ("Corrupted Files", f"{stats['corrupted']:,}"),
+        ("Files Quarantined", f"{stats['quarantined']:,}"),
+        ("Errors", f"{stats['errors']:,}")
+    ]
+    
+    console.print(create_summary_table("Scan Summary", summary_data))
+    
+    if corrupted_files and dry_run:
+        console.print()
+        console.print(f"[info]💡 Run without --dry-run to quarantine {len(corrupted_files)} corrupted files[/info]")
 
 @cli.command()
 @click.argument('xml_path', type=click.Path(exists=True, path_type=Path))
-@click.option('--search-dir', '-s', type=click.Path(exists=True, path_type=Path), 
-              help='Directory to search for replacement files')
-@click.option('--replace', '-r', is_flag=True, help='Automatically copy found replacements')
+@click.option('--library-root', '-r', type=click.Path(path_type=Path),
+              help='Override root path of Apple Music library (auto-detected from XML by default)')
+@click.option('--auto-add-dir', type=click.Path(path_type=Path),
+              help='Directory for automatic import to Apple Music (auto-detected by default)')
 @click.option('--dry-run', '-dr', is_flag=True, help='Preview without making changes')
 @click.option('--limit', '-l', type=int, help='Process only first N tracks')
-@click.option('--auto-add-dir', type=click.Path(path_type=Path),
-              default=Path.home() / "Music" / "iTunes" / "iTunes Media" / "Automatically Add to Music.localized",
-              help='Directory for automatic import to Apple Music')
-@click.pass_context
-def mscan(ctx: click.Context, xml_path: Path, search_dir: Optional[Path], 
-         replace: bool, dry_run: bool, limit: Optional[int], auto_add_dir: Path) -> None:
-    """Scan Library.xml export file for missing tracks"""
+def sync(xml_path: Path, library_root: Optional[Path], 
+         auto_add_dir: Optional[Path], dry_run: bool, limit: Optional[int]) -> None:
+    """Sync tracks from outside library to auto-add folder
     
-    from .library_xml_parser import LibraryXMLParser
+    Finds tracks that are outside the Apple Music library folder and copies
+    them to the 'Automatically Add to Music' folder for import.
+    """
+    import shutil
     
-    console.print(Panel.fit("📚 Loading Library.xml", style="header"))
+    console.print(Panel.fit("🔄 Library Sync", style="bold cyan"))
     
-    # Display configuration
-    config = {
-        "XML File": str(xml_path),
-        "Search Directory": str(search_dir) if search_dir else "None",
-        "Auto-replace": "Dry Run" if dry_run else "Enabled" if replace else "Disabled",
-        "Track Limit": str(limit) if limit else "All"
-    }
-    console.print(create_status_panel("Library Scan Configuration", config, "info"))
+    # Parse XML
+    parser = LibraryXMLParser(xml_path)
+    
+    # Parse tracks first to populate music_folder
+    with console.status("[cyan]Loading tracks from XML...", spinner="dots"):
+        tracks = parser.parse()
+        if limit:
+            tracks = tracks[:limit]
+    
+    console.print(f"[success]✅ Loaded {len(tracks)} tracks[/success]")
     console.print()
     
-    try:
-        # Parse the Library.xml
-        with console.status("[bold cyan]Parsing Library.xml...", spinner="dots"):
-            parser = LibraryXMLParser(xml_path)
-            tracks = parser.parse()
-            
-            if limit:
-                tracks = tracks[:limit]
+    # Auto-detect library root if not provided
+    if not library_root:
+        library_root = parser.music_folder
+        if library_root:
+            console.print(f"[info]📁 Auto-detected library root: {library_root}[/info]")
+        else:
+            console.print("[error]❌ Could not detect library root. Please specify with --library-root[/error]")
+            return
+    
+    # Auto-detect auto-add directory if not provided
+    if not auto_add_dir:
+        auto_add_dir = library_root / "Automatically Add to Music.localized"
+        if not auto_add_dir.exists():
+            auto_add_dir = library_root / "Automatically Add to iTunes.localized"
         
-        console.print(f"[success]✅ Loaded {len(tracks)} tracks[/success]\n")
+        if auto_add_dir.exists():
+            console.print(f"[info]📁 Auto-add directory: {auto_add_dir}[/info]")
+        else:
+            console.print("[error]❌ Could not find auto-add directory. Please specify with --auto-add-dir[/error]")
+            return
+    
+    # Validate auto-add directory
+    if not auto_add_dir.exists():
+        console.print(f"[error]❌ Auto-add directory does not exist: {auto_add_dir}[/error]")
+        return
+    
+    console.print()
+    
+    # Find tracks outside library
+    outside_tracks = []
+    
+    with Progress(
+        SpinnerColumn(),
+        TextColumn("[progress.description]{task.description}"),
+        BarColumn(style="cyan"),
+        MofNCompleteColumn(),
+        console=console
+    ) as progress:
         
-        # Validate file paths
-        console.print(Panel.fit("🔍 Checking Track Locations", style="header"))
-        validation = parser.validate_file_paths(tracks)
+        scan_task = progress.add_task("[cyan]Finding tracks outside library...", total=len(tracks))
         
-        valid_count = len(validation['valid'])
-        missing_count = len(validation['missing'])
-        no_location_count = len(validation['no_location'])
+        for track in tracks:
+            if track.file_path and track.file_path.exists():
+                try:
+                    # Check if track is outside library root
+                    track.file_path.relative_to(library_root)
+                except ValueError:
+                    # Track is outside library
+                    outside_tracks.append(track)
+            
+            progress.advance(scan_task)
+    
+    if not outside_tracks:
+        console.print("[info]ℹ️  All tracks are already within the library folder[/info]")
+        return
+    
+    console.print()
+    console.print(f"[warning]Found {len(outside_tracks)} tracks outside library[/warning]")
+    console.print()
+    
+    # Copy tracks
+    copied = 0
+    failed = 0
+    
+    with Progress(
+        SpinnerColumn(),
+        TextColumn("[progress.description]{task.description}"),
+        BarColumn(style="cyan"),
+        MofNCompleteColumn(),
+        console=console
+    ) as progress:
         
-        # Create status table
-        status_data = {
-            "✅ Present": f"{valid_count} ({valid_count*100/len(tracks):.1f}%)",
-            "❌ Missing": f"{missing_count} ({missing_count*100/len(tracks):.1f}%)",
-            "☁️  Cloud-only": f"{no_location_count} ({no_location_count*100/len(tracks):.1f}%)"
-        }
+        copy_task = progress.add_task("[cyan]Copying tracks...", total=len(outside_tracks))
         
-        console.print(create_summary_table("Track Status", status_data))
-        
-        # Show missing tracks
-        if missing_count > 0:
-            console.print(f"\n[error]❌ Missing Tracks ({missing_count}):[/error]")
-            
-            # Create table for missing tracks
-            missing_table = Table(show_header=True, header_style="bold red")
-            missing_table.add_column("#", style="dim", width=4)
-            missing_table.add_column("Artist", style="artist")
-            missing_table.add_column("Track", style="track_name")
-            missing_table.add_column("Album", style="muted")
-            
-            display_limit = min(20, missing_count)
-            for i, track in enumerate(validation['missing'][:display_limit], 1):
-                missing_table.add_row(
-                    str(i),
-                    track.artist or "",
-                    track.name or "",
-                    track.album or ""
-                )
-            
-            console.print(missing_table)
-            
-            if missing_count > display_limit:
-                console.print(f"[muted]... and {missing_count - display_limit} more[/muted]")
-            
-            # Find replacements if search directory provided
-            if search_dir and missing_count > 0:
-                console.print(f"\n[info]🔍 Searching for replacements in {search_dir}...[/info]")
+        for track in outside_tracks:
+            source = None
+            dest = None
+            try:
+                source = track.file_path
+                dest = auto_add_dir / source.name
                 
-                with Progress(
-                    SpinnerColumn(),
-                    TextColumn("[progress.description]{task.description}"),
-                    BarColumn(style="cyan"),
-                    MofNCompleteColumn(),
-                    TextColumn("[dim]tracks[/dim]"),
-                    console=console
-                ) as progress:
-                    
-                    search_task = progress.add_task("[cyan]Searching...", total=missing_count)
-                    replacements = {}
-                    
-                    for track in validation['missing']:
-                        candidates = parser.find_replacements([track], search_dir)
-                        if candidates:
-                            replacements.update(candidates)
-                        progress.advance(search_task)
+                # Security check: Ensure destination is within auto-add directory
+                dest_resolved = dest.resolve(strict=False)
+                auto_add_resolved = auto_add_dir.resolve()
                 
-                if replacements:
-                    console.print(f"\n[success]✅ Found replacements for {len(replacements)} tracks:[/success]")
-                    
-                    replaced_count = 0
-                    replacement_table = Table(show_header=True, header_style="bold green")
-                    replacement_table.add_column("Track", style="track_name")
-                    replacement_table.add_column("Found File", style="path")
-                    replacement_table.add_column("Score", style="highlight")
-                    replacement_table.add_column("Action", style="warning")
-                    
-                    for track, candidates in list(replacements.items())[:10]:
-                        best_match = candidates[0]
-                        file_path, score = best_match
-                        
-                        action = ""
-                        if replace and score >= 90:
-                            if dry_run:
-                                action = "Would copy"
-                            else:
-                                import shutil
-                                dest_path = auto_add_dir / file_path.name
-                                try:
-                                    auto_add_dir.mkdir(parents=True, exist_ok=True)
-                                    shutil.copy2(file_path, dest_path)
-                                    action = "✅ Copied"
-                                    replaced_count += 1
-                                except Exception as e:
-                                    action = f"❌ Failed: {e}"
-                        elif score < 90:
-                            action = "Score too low"
-                        
-                        replacement_table.add_row(
-                            f"{track.artist} - {track.name}",
-                            file_path.name,
-                            str(score),
-                            action
-                        )
-                    
-                    console.print(replacement_table)
-                    
-                    if replace:
-                        console.print(f"\n[info]📊 Replaced: {replaced_count} tracks[/info]")
+                try:
+                    dest_resolved.relative_to(auto_add_resolved)
+                except ValueError:
+                    # Path traversal attempt detected
+                    raise ValueError(f"Security error: Destination path '{dest}' is outside the auto-add directory")
+                
+                # Handle duplicate filenames
+                if dest.exists():
+                    base = dest.stem
+                    ext = dest.suffix
+                    counter = 1
+                    while dest.exists():
+                        dest = auto_add_dir / f"{base}_{counter}{ext}"
+                        dest_resolved = dest.resolve(strict=False)
+                        # Re-validate after modifying the path
+                        try:
+                            dest_resolved.relative_to(auto_add_resolved)
+                        except ValueError:
+                            raise ValueError(f"Security error: Modified destination path '{dest}' is outside the auto-add directory")
+                        counter += 1
+                
+                if not dry_run:
+                    import shutil
+                    shutil.copy2(source, dest)
+                    progress.console.print(f"[green]✅ Copied: {source.name}[/green]")
                 else:
-                    console.print("[error]❌ No replacement files found[/error]")
-        
-    except FileNotFoundError as e:
-        console.print(f"[error]❌ File not found: {e}[/error]")
-        raise click.ClickException(str(e))
-    except Exception as e:
-        console.print(f"[error]❌ Error: {e}[/error]")
-        raise click.ClickException(str(e))
+                    progress.console.print(f"[cyan]Would copy: {source.name}[/cyan]")
+                
+                copied += 1
+                
+            except Exception as e:
+                failed += 1
+                if source and dest:
+                    progress.console.print(f"[red]❌ Failed to copy: {source} → {dest}[/red]")
+                    progress.console.print(f"[red]   Error: {e}[/red]")
+                elif source:
+                    progress.console.print(f"[red]❌ Failed to process: {source}[/red]")
+                    progress.console.print(f"[red]   Error: {e}[/red]")
+                else:
+                    progress.console.print(f"[red]❌ Failed to process track: {track.name if hasattr(track, 'name') else 'unknown'}[/red]")
+                    progress.console.print(f"[red]   Error: {e}[/red]")
+            
+            progress.advance(copy_task)
+    
+    # Summary
+    console.print()
+    console.print("=" * 50)
+    console.print()
+    
+    summary_data = [
+        ("Tracks Outside Library", f"{len(outside_tracks):,}"),
+        ("Successfully Copied", f"{copied:,}"),
+        ("Failed", f"{failed:,}")
+    ]
+    
+    console.print(create_summary_table("Sync Summary", summary_data))
+    
+    if dry_run and copied > 0:
+        console.print()
+        console.print(f"[info]💡 Run without --dry-run to copy {copied} tracks[/info]")
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     cli()

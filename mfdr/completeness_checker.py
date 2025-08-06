@@ -342,14 +342,33 @@ class CompletenessChecker:
         
         # Generate unique destination filename
         dest_file = dest_dir / file_path.name
+        
+        # Security check: Ensure destination is within quarantine directory
+        # Use resolve(strict=False) since dest_file doesn't exist yet
+        dest_file_resolved = dest_file.resolve(strict=False)
+        quarantine_resolved = self.quarantine_dir.resolve()
+        
+        try:
+            dest_file_resolved.relative_to(quarantine_resolved)
+        except ValueError:
+            # Path traversal attempt detected
+            logger.error(f"Security error: Destination path '{dest_file}' is outside the quarantine directory")
+            return False
+        
         counter = 1
         while dest_file.exists():
             dest_file = dest_dir / f"{file_path.stem}_{counter}{file_path.suffix}"
+            # Re-validate after modifying the path
+            dest_file_resolved = dest_file.resolve(strict=False)
+            try:
+                dest_file_resolved.relative_to(quarantine_resolved)
+            except ValueError:
+                logger.error(f"Security error: Modified destination path '{dest_file}' is outside the quarantine directory")
+                return False
             counter += 1
         
         try:
             shutil.move(str(file_path), str(dest_file))
-            logger.info(f"Quarantined {file_path.name} to {dest_dir.name}/ (reason: {reason})")
             return True
         except Exception as e:
             logger.error(f"Failed to quarantine {file_path}: {e}")
