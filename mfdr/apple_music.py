@@ -50,7 +50,7 @@ def open_playlist_in_music(playlist_path: Path) -> Tuple[bool, Optional[str]]:
             error_msg = result.stderr.strip() if result.stderr else "Unknown error"
             
             # Check for common errors
-            if "Music" not in error_msg and "application" in error_msg:
+            if "Can't get application" in error_msg and "Music" in error_msg:
                 return False, "Apple Music app not found. Is it installed?"
             elif "User canceled" in error_msg:
                 return False, "User cancelled the operation"
