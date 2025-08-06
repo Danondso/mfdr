@@ -371,7 +371,8 @@ class TestSyncCommand:
                 
                 # Should complete but report failures
                 assert result.exit_code == 0
-                assert 'Failed: External.mp3' in result.output
+                assert 'Failed to copy:' in result.output
+                assert 'External.mp3' in result.output
                 assert 'Permission denied' in result.output
             finally:
                 Path(temp_xml_path).unlink(missing_ok=True)

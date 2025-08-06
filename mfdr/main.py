@@ -289,6 +289,17 @@ def _scan_xml(xml_path: Path, missing_only: bool, replace: bool,
                                     # Copy to auto-add folder
                                     import shutil
                                     dest = auto_add_dir / best_match.path.name
+                                    
+                                    # Security check: Ensure destination is within auto-add directory
+                                    dest_resolved = dest.resolve(strict=False)
+                                    auto_add_resolved = auto_add_dir.resolve()
+                                    
+                                    try:
+                                        dest_resolved.relative_to(auto_add_resolved)
+                                    except ValueError:
+                                        # Path traversal attempt detected
+                                        raise ValueError(f"Security error: Destination path '{dest}' is outside the auto-add directory")
+                                    
                                     try:
                                         shutil.copy2(best_match.path, dest)
                                         replaced_tracks.append((track, best_match, score))
@@ -593,9 +604,12 @@ def _scan_directory(directory: Path, dry_run: bool, limit: Optional[int],
                         if quarantine and not dry_run:
                             try:
                                 reason = details.get('reason', 'corrupted')
-                                new_path = checker.quarantine_file(file_path, reason)
-                                stats["quarantined"] += 1
-                                progress.console.print(f"[yellow]📦 Quarantined: {file_path.name} → {reason}/[/yellow]")
+                                if checker.quarantine_file(file_path, reason):
+                                    stats["quarantined"] += 1
+                                    progress.console.print(f"[yellow]📦 Quarantined: {file_path.name} → {reason}/[/yellow]")
+                                else:
+                                    stats["errors"] += 1
+                                    progress.console.print(f"[red]❌ Failed to quarantine {file_path.name}[/red]")
                             except Exception as e:
                                 stats["errors"] += 1
                                 progress.console.print(f"[red]❌ Failed to quarantine {file_path.name}: {e}[/red]")
@@ -619,7 +633,7 @@ def _scan_directory(directory: Path, dry_run: bool, limit: Optional[int],
         save_checkpoint()
         
         # Clean up checkpoint if completed successfully
-        if stats["total_checked"] >= len(audio_files) + len(processed_files) - stats["total_checked"]:
+        if stats["total_checked"] >= len(audio_files):
             checkpoint_file.unlink(missing_ok=True)
             console.print()
             console.print("[success]✅ Scan completed successfully[/success]")
@@ -755,9 +769,21 @@ def sync(xml_path: Path, library_root: Optional[Path],
         copy_task = progress.add_task("[cyan]Copying tracks...", total=len(outside_tracks))
         
         for track in outside_tracks:
+            source = None
+            dest = None
             try:
                 source = track.file_path
                 dest = auto_add_dir / source.name
+                
+                # Security check: Ensure destination is within auto-add directory
+                dest_resolved = dest.resolve(strict=False)
+                auto_add_resolved = auto_add_dir.resolve()
+                
+                try:
+                    dest_resolved.relative_to(auto_add_resolved)
+                except ValueError:
+                    # Path traversal attempt detected
+                    raise ValueError(f"Security error: Destination path '{dest}' is outside the auto-add directory")
                 
                 # Handle duplicate filenames
                 if dest.exists():
@@ -766,6 +792,12 @@ def sync(xml_path: Path, library_root: Optional[Path],
                     counter = 1
                     while dest.exists():
                         dest = auto_add_dir / f"{base}_{counter}{ext}"
+                        dest_resolved = dest.resolve(strict=False)
+                        # Re-validate after modifying the path
+                        try:
+                            dest_resolved.relative_to(auto_add_resolved)
+                        except ValueError:
+                            raise ValueError(f"Security error: Modified destination path '{dest}' is outside the auto-add directory")
                         counter += 1
                 
                 if not dry_run:
@@ -779,7 +811,15 @@ def sync(xml_path: Path, library_root: Optional[Path],
                 
             except Exception as e:
                 failed += 1
-                progress.console.print(f"[red]❌ Failed: {track.file_path.name} - {e}[/red]")
+                if source and dest:
+                    progress.console.print(f"[red]❌ Failed to copy: {source} → {dest}[/red]")
+                    progress.console.print(f"[red]   Error: {e}[/red]")
+                elif source:
+                    progress.console.print(f"[red]❌ Failed to process: {source}[/red]")
+                    progress.console.print(f"[red]   Error: {e}[/red]")
+                else:
+                    progress.console.print(f"[red]❌ Failed to process track: {track.name if hasattr(track, 'name') else 'unknown'}[/red]")
+                    progress.console.print(f"[red]   Error: {e}[/red]")
             
             progress.advance(copy_task)
     

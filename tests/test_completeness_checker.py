@@ -150,9 +150,10 @@ class TestQuarantineOperations:
         file_path.write_bytes(b"AUDIO" * 100)
         return file_path
     
-    def test_quarantine_file_success(self, checker, temp_audio_file, temp_dir):
+    def test_quarantine_file_success(self, temp_audio_file, temp_dir):
         """Test successful file quarantine"""
-        checker.quarantine_dir = temp_dir / "test_quarantine"
+        # Create checker with specific quarantine dir
+        checker = CompletenessChecker(quarantine_dir=temp_dir / "test_quarantine")
         result = checker.quarantine_file(temp_audio_file, "corrupted")
         
         assert result is True
