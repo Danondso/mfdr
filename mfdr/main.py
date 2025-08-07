@@ -19,11 +19,12 @@ from rich.progress import Progress, SpinnerColumn, TextColumn, BarColumn, TimeRe
 from rich.rule import Rule
 from rich import box
 
-from .file_manager import FileManager
+from .file_manager import FileCandidate
 from .track_matcher import TrackMatcher
 from .completeness_checker import CompletenessChecker
 from .library_xml_parser import LibraryXMLParser
 from .apple_music import open_playlist_in_music
+from .simple_file_search import SimpleFileSearch
 
 # Initialize Rich console
 console = Console()
@@ -44,6 +45,344 @@ def create_status_panel(title: str, stats: dict, style: str = "cyan") -> Panel:
     """Create a formatted status panel"""
     content = "\n".join([f"{k}: {v}" for k, v in stats.items()])
     return Panel(content, title=title, style=style)
+
+def score_candidate(track, candidate_path, candidate_size=None):
+    """
+    Score a candidate file based on how well it matches the missing track.
+    
+    Returns a score from 0-100 where higher is better.
+    """
+    score = 0
+    
+    # Get filename without extension
+    filename = candidate_path.stem.lower()
+    track_name = track.name.lower() if track.name else ""
+    track_artist = track.artist.lower() if track.artist else ""
+    track_album = track.album.lower() if track.album else ""
+    
+    # Exact name match is most important (40 points)
+    if track_name and track_name in filename:
+        score += 40
+    elif track_name:
+        # Partial match - check for common words
+        track_words = set(track_name.split())
+        filename_words = set(filename.replace('_', ' ').replace('-', ' ').split())
+        common_words = track_words & filename_words
+        if common_words:
+            score += 20 * len(common_words) / len(track_words)
+    
+    # Artist match (30 points)
+    if track_artist:
+        # Check in filename (with various separators)
+        filename_normalized = filename.replace('_', ' ').replace('-', ' ')
+        # Also normalize the artist name for comparison
+        artist_normalized = track_artist.replace('/', ' ')
+        
+        if track_artist in filename_normalized:
+            score += 30
+        elif artist_normalized in filename_normalized:  # Handle AC/DC -> AC DC
+            score += 30
+        elif track_artist.replace('/', '') in filename_normalized:  # Handle AC/DC -> ACDC
+            score += 25
+        elif track_artist in str(candidate_path.parent).lower():
+            score += 20  # Artist in parent directory
+    
+    # Album match (20 points)
+    parent_dir = candidate_path.parent.name.lower()
+    if track_album and track_album in parent_dir:
+        score += 20
+    elif track_album and track_album in str(candidate_path.parent.parent).lower():
+        score += 10  # Album in grandparent directory
+    
+    # Size similarity (10 points)
+    if candidate_size and track.size:
+        size_diff = abs(candidate_size - track.size) / track.size
+        if size_diff == 0:  # Exact match
+            score += 10
+        elif size_diff < 0.05:  # Within 5%
+            score += 8
+        elif size_diff < 0.1:  # Within 10%
+            score += 6
+        elif size_diff < 0.2:  # Within 20%
+            score += 4
+        elif size_diff < 0.3:  # Within 30%
+            score += 2
+    
+    return round(min(score, 100), 2)  # Cap at 100 and round to 2 decimal places
+
+
+def display_candidates_and_select(track, candidates, console, auto_accept_threshold: float = 88.0) -> Optional[int]:
+    """
+    Display candidates and let user select one
+    
+    Args:
+        track: The missing track
+        candidates: List of candidate files
+        console: Rich console for output
+        auto_accept_threshold: Score threshold for auto-accepting candidates (default 88.0)
+    
+    Returns:
+        Selected index (0-based), -1 for removal, or None if skipped
+    """
+    console.print()
+    console.print(f"[bold yellow]Missing: {track.artist} - {track.name}[/bold yellow]")
+    
+    # Show album and other track info
+    info_parts = []
+    if track.album:
+        info_parts.append(f"Album: {track.album}")
+    if track.year:
+        info_parts.append(f"Year: {track.year}")
+    if track.genre:
+        info_parts.append(f"Genre: {track.genre}")
+    if track.size:
+        size_mb = track.size / (1024 * 1024)
+        info_parts.append(f"Size: {size_mb:.1f} MB")
+    
+    if info_parts:
+        console.print(f"[dim]{' | '.join(info_parts)}[/dim]")
+    
+    if not candidates:
+        # No candidates found - offer to remove from Apple Music
+        console.print("\n[red]No replacement candidates found[/red]")
+        console.print("[dim]This track appears to be missing from your library.[/dim]")
+        if track.album:
+            console.print(f"[dim]Try searching for: \"{track.album}\" by {track.artist}[/dim]")
+        
+        while True:
+            console.print("\n[bold]Enter 'r' to remove from Apple Music, 's' to skip, 'q' to quit:[/bold] ", end="")
+            choice = input().strip().lower()
+            
+            if choice == 'q':
+                raise KeyboardInterrupt()
+            elif choice == 's' or choice == '':
+                console.print("[yellow]Skipped[/yellow]")
+                return None
+            elif choice == 'r':
+                console.print("[red]Marked for removal from Apple Music[/red]")
+                return -1  # Special value to indicate removal
+            else:
+                console.print("[red]Invalid input. Please enter 'r' to remove, 's' to skip, or 'q' to quit[/red]")
+                continue
+    
+    console.print(f"\n[cyan]Found {len(candidates)} candidates:[/cyan]")
+    
+    # Create a table of candidates
+    table = Table(show_header=True, header_style="bold magenta")
+    table.add_column("#", style="dim", width=3)
+    table.add_column("Score", justify="right", style="bold cyan")
+    table.add_column("Filename", style="cyan", no_wrap=False)
+    table.add_column("Artist", style="yellow", no_wrap=False)
+    table.add_column("Album", style="blue", no_wrap=False)
+    table.add_column("Type", style="magenta", width=5)
+    table.add_column("Bitrate", justify="right", style="green")
+    table.add_column("Size (MB)", justify="right", style="green")
+    table.add_column("Path", style="dim", no_wrap=False)
+    
+    # Handle both Path objects and (Path, size) tuples and calculate scores
+    scored_items = []
+    for item in candidates:
+        if isinstance(item, tuple):
+            path, size = item
+        else:
+            # It's just a Path object
+            path = item
+            try:
+                size = path.stat().st_size if path.exists() else 0
+            except OSError:
+                size = 0
+        
+        # Calculate score for this candidate
+        score = score_candidate(track, path, size)
+        scored_items.append((score, path, size))
+    
+    # Sort by score (highest first)
+    scored_items.sort(key=lambda x: x[0], reverse=True)
+    
+    # Check for auto-accept conditions
+    if scored_items and auto_accept_threshold > 0:
+        top_score = scored_items[0][0]
+        
+        # If top score meets or exceeds threshold
+        if top_score >= auto_accept_threshold:
+            # Find all candidates with the same top score
+            top_candidates = [(idx, score, path, size) for idx, (score, path, size) in enumerate(scored_items) if score == top_score]
+            
+            if len(top_candidates) == 1:
+                # Only one candidate with top score - auto-accept
+                console.print(f"\n[bold green]Auto-accepting candidate with score {top_score:.2f} (>= {auto_accept_threshold})[/bold green]")
+                selected_idx = 0
+                selected_path = scored_items[0][1]
+                console.print(f"[green]✓ Selected: {selected_path.name}[/green]")
+                return selected_idx
+            else:
+                # Multiple candidates with same high score - prefer one without '1' in filename
+                for idx, score, path, size in top_candidates:
+                    if '1' not in path.stem:  # Check if '1' is not in filename (without extension)
+                        console.print(f"\n[bold green]Auto-accepting candidate with score {score:.2f} (>= {auto_accept_threshold}, no '1' in filename)[/bold green]")
+                        console.print(f"[green]✓ Selected: {path.name}[/green]")
+                        return idx
+                
+                # If all have '1' in filename, just take the first one
+                console.print(f"\n[bold green]Auto-accepting first candidate with score {top_score:.2f} (>= {auto_accept_threshold})[/bold green]")
+                console.print(f"[green]✓ Selected: {scored_items[0][1].name}[/green]")
+                return 0
+        
+        # Special case: Single candidate with good match (score > 70)
+        elif len(scored_items) == 1 and top_score > 70:
+            console.print(f"\n[bold green]Auto-accepting single candidate with score {top_score:.2f} (only candidate, score > 70)[/bold green]")
+            console.print(f"[green]✓ Selected: {scored_items[0][1].name}[/green]")
+            return 0
+    
+    # Take top 20 for display
+    display_items = [(path, size, score) for score, path, size in scored_items[:20]]
+    
+    # Import mutagen for reading metadata
+    try:
+        from mutagen import File as MutagenFile
+    except ImportError:
+        MutagenFile = None
+    
+    for i, (path, size, score) in enumerate(display_items, 1):
+        size_mb = size / (1024 * 1024) if size else 0
+        
+        # Try to read actual metadata from the file first
+        artist = ""
+        album = ""
+        bitrate = ""
+        
+        # Get file type from extension
+        file_type = path.suffix[1:].upper() if path.suffix else "?"
+        
+        if MutagenFile and path.exists():
+            try:
+                # Read metadata using mutagen
+                audio_file = MutagenFile(path)
+                if audio_file:
+                    # Try to get bitrate
+                    if hasattr(audio_file.info, 'bitrate'):
+                        bitrate_value = audio_file.info.bitrate
+                        if bitrate_value:
+                            # Convert to kbps if needed
+                            if bitrate_value > 10000:  # Likely in bps
+                                bitrate = f"{bitrate_value // 1000}k"
+                            else:
+                                bitrate = f"{bitrate_value}k"
+                    
+                    if audio_file.tags:
+                        # Try different tag formats
+                        # ID3 tags (MP3)
+                        if 'TPE1' in audio_file.tags:  # Artist
+                            artist = str(audio_file.tags['TPE1'][0])
+                        elif 'artist' in audio_file.tags:
+                            artist = str(audio_file.tags['artist'][0])
+                        elif '\xa9ART' in audio_file.tags:  # iTunes MP4
+                            artist = str(audio_file.tags['\xa9ART'][0])
+                        
+                        if 'TALB' in audio_file.tags:  # Album
+                            album = str(audio_file.tags['TALB'][0])
+                        elif 'album' in audio_file.tags:
+                            album = str(audio_file.tags['album'][0])
+                        elif '\xa9alb' in audio_file.tags:  # iTunes MP4
+                            album = str(audio_file.tags['\xa9alb'][0])
+            except Exception:
+                # If metadata reading fails, fall back to path parsing
+                pass
+        
+        # Get path parts for later use
+        path_parts = path.parts
+        
+        # If we couldn't get metadata, try simple path/filename extraction as fallback
+        if not artist or not album:
+            filename = path.stem  # filename without extension
+            
+            # Simple generic folder list
+            generic_folders = {'Music', 'iTunes', 'iTuunes', 'Media', 'Downloads', 'Desktop', 
+                             'Documents', 'Users', 'home', 'backup', 'Backup', 'tmp', 'temp', 
+                             'Volumes', 'Raw Dumps', 'De-Duped', 'Quarantine', 'iPod Dump', 
+                             'Music-Backup', 'suspiciously_small', 'corrupted', 'no_metadata', 
+                             'truncated', 'Music-Backup-Bulk', 'Music-Backup-B', 'External', 
+                             'Storage'}
+            
+            # Try to extract artist from filename if we don't have it
+            if not artist:
+                if ' - ' in filename:
+                    # Pattern like "Artist - Song" or "Katie Chinn - 27 Hello"
+                    parts = filename.split(' - ')
+                    if len(parts) >= 2:
+                        first_part = parts[0].strip()
+                        # Check if first part looks like artist (not just numbers)
+                        if first_part and not first_part.isdigit():
+                            artist = first_part
+                elif '_' in filename:
+                    # Pattern like "Artist_Song"
+                    parts = filename.split('_')
+                    if len(parts) >= 2 and not parts[0][0].isdigit():
+                        artist = parts[0].strip()
+            
+            # Try to get album from parent folder if we don't have it and it's not generic
+            if not album and len(path_parts) >= 2:
+                parent_folder = path.parent.name
+                if parent_folder not in generic_folders and not parent_folder.startswith('.'):
+                    album = parent_folder
+            
+            # If still no artist but we have an album-like parent, check grandparent
+            if not artist and album and len(path_parts) >= 3:
+                grandparent = path.parent.parent.name
+                if grandparent not in generic_folders and not grandparent.startswith('.'):
+                    # This might be the artist
+                    artist = grandparent
+        
+        # Shorten path for display
+        if len(path_parts) > 4:
+            short_path = ".../" + "/".join(path_parts[-3:-1])
+        else:
+            short_path = str(path.parent).replace(str(Path.home()), "~")
+        
+        table.add_row(
+            str(i),
+            f"{score:.2f}",
+            path.name,
+            artist or "-",
+            album or "-",
+            file_type,
+            bitrate or "-",
+            f"{size_mb:.1f}",
+            short_path
+        )
+    
+    console.print(table)
+    
+    # Keep asking until we get a valid response
+    while True:
+        console.print("\n[bold]Enter number to select (1-{0}), 'r' to remove from Apple Music, 's' to skip, 'q' to quit:[/bold] ".format(min(len(candidates), 20)), end="")
+        
+        try:
+            choice = input().strip().lower()
+            
+            if choice == 'q':
+                raise KeyboardInterrupt()
+            elif choice == 's' or choice == '':
+                console.print("[yellow]Skipped[/yellow]")
+                return None
+            elif choice == 'r':
+                console.print("[red]Marked for removal from Apple Music[/red]")
+                return -1  # Special value to indicate removal
+            else:
+                try:
+                    idx = int(choice) - 1
+                    if 0 <= idx < min(len(candidates), 20):
+                        return idx
+                    else:
+                        console.print("[red]Invalid selection. Please enter a number between 1 and {}[/red]".format(min(len(candidates), 20)))
+                        continue  # Ask again
+                except ValueError:
+                    console.print("[red]Invalid input. Please enter a number, 'r' to remove, 's' to skip, or 'q' to quit[/red]")
+                    continue  # Ask again
+        except KeyboardInterrupt:
+            raise
+        except:
+            return None
 
 def create_summary_table(title: str, data: List[Tuple[str, str]]) -> Table:
     """Create a formatted summary table"""
@@ -107,6 +446,10 @@ def cli(verbose: bool):
               help='[XML mode] Only check for missing tracks (skip corruption check)')
 @click.option('--replace', '-r', is_flag=True, 
               help='[XML mode] Automatically copy found tracks to auto-add folder')
+@click.option('--interactive', '-i', is_flag=True,
+              help='[XML mode] Interactive mode - manually select replacements from candidates')
+@click.option('--auto-accept', type=float, default=88.0,
+              help='[XML mode] Auto-accept score threshold (default: 88.0, set to 0 to disable)')
 @click.option('--search-dir', '-s', type=click.Path(exists=True, path_type=Path),
               help='[XML mode] Directory to search for replacements')
 @click.option('--auto-add-dir', type=click.Path(path_type=Path),
@@ -126,8 +469,9 @@ def cli(verbose: bool):
               help='[Dir mode] Resume from last checkpoint')
 def scan(path: Path, mode: str, quarantine: bool, fast: bool, dry_run: bool,
          limit: Optional[int], checkpoint: bool, verbose: bool,
-         missing_only: bool, replace: bool, search_dir: Optional[Path], 
-         auto_add_dir: Optional[Path], playlist: Optional[Path], no_open: bool,
+         missing_only: bool, replace: bool, interactive: bool, auto_accept: float,
+         search_dir: Optional[Path], auto_add_dir: Optional[Path], 
+         playlist: Optional[Path], no_open: bool,
          recursive: bool, quarantine_dir: Optional[Path], 
          checkpoint_interval: int, resume: bool) -> None:
     """Scan for missing and corrupted tracks in Library.xml or directories
@@ -172,14 +516,14 @@ def scan(path: Path, mode: str, quarantine: bool, fast: bool, dry_run: bool,
     
     # Route to appropriate handler
     if mode == 'xml':
-        _scan_xml(path, missing_only, replace, search_dir, quarantine, checkpoint,
+        _scan_xml(path, missing_only, replace, interactive, auto_accept, search_dir, quarantine, checkpoint,
                   fast, dry_run, limit, auto_add_dir, verbose, playlist, no_open)
     else:
         _scan_directory(path, dry_run, limit, recursive, quarantine_dir, fast,
                        checkpoint_interval, resume, quarantine)
 
-def _scan_xml(xml_path: Path, missing_only: bool, replace: bool,
-              search_dir: Optional[Path], quarantine: bool, checkpoint: bool,
+def _scan_xml(xml_path: Path, missing_only: bool, replace: bool, interactive: bool,
+              auto_accept: float, search_dir: Optional[Path], quarantine: bool, checkpoint: bool,
               fast: bool, dry_run: bool, limit: Optional[int], auto_add_dir: Optional[Path],
               verbose: bool, playlist: Optional[Path], no_open: bool) -> None:
     """Handle XML mode scanning"""
@@ -190,7 +534,8 @@ def _scan_xml(xml_path: Path, missing_only: bool, replace: bool,
         "XML File": str(xml_path),
         "Scan Type": "Missing only" if missing_only else "Full scan (missing + corruption)",
         "Search Directory": str(search_dir) if search_dir else "Not specified",
-        "Replace": "Yes" if replace else "No",
+        "Replace": "Yes (auto-removes old entries)" if replace else "No",
+        "Interactive": "Yes" if interactive else "No",
         "Quarantine": "Yes" if quarantine else "No",
         "Dry Run": "Yes" if dry_run else "No",
         "Limit": str(limit) if limit else "All tracks"
@@ -200,8 +545,8 @@ def _scan_xml(xml_path: Path, missing_only: bool, replace: bool,
     
     try:
         # Initialize components
-        track_matcher = TrackMatcher()
-        file_manager = FileManager(search_dir) if search_dir else None
+        track_matcher = TrackMatcher()  # Still needed for scoring in auto-mode
+        simple_search = SimpleFileSearch([search_dir]) if search_dir else None
         completeness_checker = CompletenessChecker() if not missing_only else None
         
         # Checkpoint handling
@@ -223,11 +568,32 @@ def _scan_xml(xml_path: Path, missing_only: bool, replace: bool,
         
         # Auto-detect auto-add directory if not specified
         if replace and not auto_add_dir:
-            auto_add_dir = Path.home() / "Music" / "iTunes" / "iTunes Media" / "Automatically Add to Music.localized"
-            if not auto_add_dir.exists():
-                auto_add_dir = Path.home() / "Music" / "iTunes" / "iTunes Media" / "Automatically Add to iTunes.localized"
+            # Try to derive from the Music Folder in Library.xml
+            if parser.music_folder:
+                # The music folder is typically something like: /Users/username/Music/Music/Media/
+                # The auto-add folder is at the same level as Media
+                media_path = parser.music_folder
+                
+                # Try different possible locations based on the media path
+                possible_locations = [
+                    media_path / "Automatically Add to Music.localized",
+                    media_path / "Automatically Add to iTunes.localized",
+                    media_path.parent / "Automatically Add to Music.localized",
+                    media_path.parent / "Automatically Add to iTunes.localized",
+                ]
+                
+                for possible_path in possible_locations:
+                    if possible_path.exists():
+                        auto_add_dir = possible_path
+                        break
             
-            if auto_add_dir.exists():
+            # Fallback to old hardcoded logic if we couldn't find it from XML
+            if not auto_add_dir:
+                auto_add_dir = Path.home() / "Music" / "iTunes" / "iTunes Media" / "Automatically Add to Music.localized"
+                if not auto_add_dir.exists():
+                    auto_add_dir = Path.home() / "Music" / "iTunes" / "iTunes Media" / "Automatically Add to iTunes.localized"
+            
+            if auto_add_dir and auto_add_dir.exists():
                 console.print(f"[info]📁 Auto-add directory: {auto_add_dir}[/info]")
                 console.print()
             else:
@@ -235,15 +601,16 @@ def _scan_xml(xml_path: Path, missing_only: bool, replace: bool,
                 return
         
         # Index files if search directory provided
-        if search_dir and file_manager:
+        if search_dir and simple_search:
             console.print(Panel.fit("📂 Indexing Music Files", style="bold cyan"))
             
             with console.status("[bold cyan]Indexing files...", spinner="dots"):
                 start_time = time.time()
-                file_manager.index_files()
+                # SimpleFileSearch builds index on init, just report the count
+                total_files = len(simple_search.name_index)
                 index_time = time.time() - start_time
             
-            console.print(f"[success]✅ Indexed {len(file_manager.file_index)} files in {index_time:.1f}s[/success]")
+            console.print(f"[success]✅ Indexed {total_files} unique filenames in {index_time:.1f}s[/success]")
             console.print()
         
         # Process tracks
@@ -253,6 +620,8 @@ def _scan_xml(xml_path: Path, missing_only: bool, replace: bool,
         corrupted_tracks = []
         replaced_tracks = []
         quarantined_tracks = []
+        removed_tracks = []  # Tracks marked for removal without replacement
+        immediate_deleted_count = 0  # Count of tracks deleted immediately during scan
         
         # Resume from checkpoint if enabled
         start_idx = last_processed if checkpoint and last_processed < len(tracks) else 0
@@ -275,20 +644,84 @@ def _scan_xml(xml_path: Path, missing_only: bool, replace: bool,
                     missing_tracks.append(track)
                     
                     # Search for replacement if requested
-                    if search_dir and file_manager:
-                        candidates = file_manager.search_files(track)
+                    if search_dir and simple_search:
+                        # Use simple search - just find by name like Finder does
+                        found_files = simple_search.find_by_name_and_size(
+                            track.name, 
+                            track.size,
+                            track.artist
+                        )
                         
-                        if candidates:
-                            # Score and find best match
-                            scored_candidates = track_matcher.get_match_candidates_with_scores(track, candidates)
+                        selected_path = None
+                        
+                        if found_files or (interactive and not dry_run):
+                            # Either we have candidates, or we're in interactive mode where user can choose to remove
                             
-                            if scored_candidates:
-                                best_match, score, details = scored_candidates[0]
+                            if interactive and not dry_run:
+                                # Interactive mode - let user select
+                                # Prepare candidate list with sizes
+                                candidate_list = []
+                                for file_path in found_files[:20]:  # Show up to 20
+                                    try:
+                                        size = file_path.stat().st_size
+                                        candidate_list.append((file_path, size))
+                                    except OSError:
+                                        candidate_list.append((file_path, 0))
                                 
-                                if score >= 90 and replace and not dry_run:
+                                # Pause progress bar for interactive selection
+                                progress.stop()
+                                
+                                # Call display_candidates_and_select even if no candidates (to allow removal)
+                                selected_idx = display_candidates_and_select(track, candidate_list, console, auto_accept_threshold=auto_accept)
+                                
+                                # Resume progress bar
+                                progress.start()
+                                
+                                if selected_idx == -1:
+                                    # User chose to remove this track from Apple Music
+                                    removed_tracks.append(track)
+                                    
+                                    # Delete immediately unless in dry_run mode
+                                    if not dry_run:
+                                        if hasattr(track, 'persistent_id') and track.persistent_id:
+                                            from mfdr.apple_music import delete_tracks_by_id
+                                            # Ensure persistent_id is passed as string
+                                            track_id_str = str(track.persistent_id) if track.persistent_id else None
+                                            if track_id_str:
+                                                deleted, errors = delete_tracks_by_id([track_id_str], dry_run=False)
+                                                if deleted > 0:
+                                                    console.print(f"[red]✗ Removed from Apple Music: {track.artist} - {track.name}[/red]")
+                                                    immediate_deleted_count += 1
+                                                else:
+                                                    console.print(f"[warning]⚠️  Failed to remove: {track.artist} - {track.name}[/warning]")
+                                                    if errors:
+                                                        console.print(f"   [dim]Error: {errors[0]}[/dim]")
+                                            else:
+                                                console.print(f"[warning]⚠️  Cannot remove (invalid persistent ID): {track.artist} - {track.name}[/warning]")
+                                        else:
+                                            console.print(f"[warning]⚠️  Cannot remove (no persistent ID): {track.artist} - {track.name}[/warning]")
+                                    else:
+                                        console.print(f"[info]Would remove from Apple Music: {track.artist} - {track.name}[/info]")
+                                    
+                                    selected_path = None
+                                elif selected_idx is not None and candidate_list:
+                                    selected_path = candidate_list[selected_idx][0]
+                                else:
+                                    selected_path = None
+                            else:
+                                # Non-interactive mode - just take the first match
+                                # (since our search already prioritizes by name match)
+                                selected_path = found_files[0] if found_files else None
+                            
+                            if selected_path:
+                                # User selected or auto-selected a replacement
+                                # For interactive mode, use a high confidence score since user manually selected
+                                score = 100 if interactive else 90  # Default high score for simple search matches
+                                
+                                if replace and not dry_run:
                                     # Copy to auto-add folder
                                     import shutil
-                                    dest = auto_add_dir / best_match.path.name
+                                    dest = auto_add_dir / selected_path.name
                                     
                                     # Security check: Ensure destination is within auto-add directory
                                     dest_resolved = dest.resolve(strict=False)
@@ -301,32 +734,54 @@ def _scan_xml(xml_path: Path, missing_only: bool, replace: bool,
                                         raise ValueError(f"Security error: Destination path '{dest}' is outside the auto-add directory")
                                     
                                     try:
-                                        shutil.copy2(best_match.path, dest)
-                                        replaced_tracks.append((track, best_match, score))
+                                        shutil.copy2(selected_path, dest)
+                                        # Create a FileCandidate for tracking
+                                        selected_candidate = FileCandidate(path=selected_path)
+                                        replaced_tracks.append((track, selected_candidate, score))
                                         console.print(f"[success]✅ Replaced: {track.artist} - {track.name}[/success]")
                                         # Show relative path if available
-                                        display_path = best_match.path.name
+                                        display_path = selected_path.name
                                         if search_dir:
                                             try:
-                                                display_path = str(best_match.path.relative_to(search_dir))
+                                                display_path = str(selected_path.relative_to(search_dir))
                                             except ValueError:
                                                 pass
                                         console.print(f"   [dim]→ Using: {display_path} (score: {score})[/dim]")
+                                        
+                                        # Always delete the old missing entry from Apple Music after successful replacement
+                                        if not dry_run:
+                                            if hasattr(track, 'persistent_id') and track.persistent_id:
+                                                from mfdr.apple_music import delete_tracks_by_id
+                                                # Ensure persistent_id is passed as string
+                                                track_id_str = str(track.persistent_id) if track.persistent_id else None
+                                                if track_id_str:
+                                                    deleted, errors = delete_tracks_by_id([track_id_str], dry_run=False)
+                                                    if deleted > 0:
+                                                        console.print(f"   [dim]✓ Removed old entry from Apple Music[/dim]")
+                                                        immediate_deleted_count += 1
+                                                    else:
+                                                        console.print(f"   [warning]⚠️  Could not remove old entry from Apple Music[/warning]")
+                                                        if errors:
+                                                            console.print(f"   [dim]Error: {errors[0]}[/dim]")
+                                                else:
+                                                    console.print(f"   [warning]⚠️  Old entry has invalid persistent ID - manual removal required[/warning]")
+                                            else:
+                                                console.print(f"   [warning]⚠️  Old entry has no persistent ID - manual removal required[/warning]")
                                     except Exception as e:
                                         console.print(f"[error]❌ Failed to copy: {e}[/error]")
-                                elif score >= 90 and replace and dry_run:
-                                    replaced_tracks.append((track, best_match, score))
+                                elif replace and dry_run:
+                                    # Create a FileCandidate for tracking
+                                    selected_candidate = FileCandidate(path=selected_path)
+                                    replaced_tracks.append((track, selected_candidate, score))
                                     console.print(f"[info]Would replace: {track.artist} - {track.name}[/info]")
                                     # Show relative path if available
-                                    display_path = best_match.path.name
+                                    display_path = selected_path.name
                                     if search_dir:
                                         try:
-                                            display_path = str(best_match.path.relative_to(search_dir))
+                                            display_path = str(selected_path.relative_to(search_dir))
                                         except ValueError:
                                             pass
                                     console.print(f"   [dim]→ Using: {display_path} (score: {score})[/dim]")
-                                    if verbose and 'components' in details:
-                                        console.print(f"   [dim]  Match details: {', '.join(f'{k}={v}' for k, v in details['components'].items() if v > 0)}[/dim]")
                 
                 elif not missing_only:
                     # Check for corruption
@@ -360,6 +815,40 @@ def _scan_xml(xml_path: Path, missing_only: bool, replace: bool,
         if checkpoint and checkpoint_file and checkpoint_file.exists():
             checkpoint_file.unlink()
         
+        # Note: With immediate deletion, this section is now mostly for summary/reporting
+        # Tracks are deleted immediately during the scan
+        deleted_count = immediate_deleted_count  # Use the count from immediate deletions
+        
+        if (replaced_tracks or removed_tracks) and dry_run:
+            # Collect track IDs from both replaced and removed tracks
+            track_ids_to_delete = []
+            missing_persistent_ids = []
+            
+            # Collect from replaced tracks
+            for track, _, _ in replaced_tracks:
+                if hasattr(track, 'persistent_id') and track.persistent_id:
+                    track_ids_to_delete.append(track.persistent_id)
+                else:
+                    missing_persistent_ids.append(f"{track.artist} - {track.name} (replaced)")
+            
+            # Collect from manually removed tracks
+            for track in removed_tracks:
+                if hasattr(track, 'persistent_id') and track.persistent_id:
+                    track_ids_to_delete.append(track.persistent_id)
+                else:
+                    missing_persistent_ids.append(f"{track.artist} - {track.name} (removed)")
+            
+            if track_ids_to_delete:
+                console.print()
+                console.print(f"[info]Would remove {len(track_ids_to_delete)} tracks from Apple Music[/info]")
+                if replaced_tracks:
+                    console.print(f"  • {len(replaced_tracks)} replaced tracks")
+                if removed_tracks:
+                    console.print(f"  • {len(removed_tracks)} manually removed tracks")
+            
+            if missing_persistent_ids:
+                console.print(f"[warning]⚠️  {len(missing_persistent_ids)} tracks have no persistent ID and cannot be deleted[/warning]")
+        
         # Display results
         console.print()
         console.print()
@@ -373,6 +862,13 @@ def _scan_xml(xml_path: Path, missing_only: bool, replace: bool,
             ("Replaced Tracks", f"{len(replaced_tracks):,}"),
             ("Quarantined Tracks", f"{len(quarantined_tracks):,}")
         ]
+        
+        # Add removed tracks to summary if any
+        if removed_tracks:
+            summary_data.append(("Removed Tracks", f"{len(removed_tracks):,}"))
+        
+        if deleted_count > 0:
+            summary_data.append(("Deleted from Apple Music", f"{deleted_count:,}"))
         
         console.print(create_summary_table("Summary", summary_data))
         
@@ -664,6 +1160,73 @@ def _scan_directory(directory: Path, dry_run: bool, limit: Optional[int],
         console.print(f"[info]💡 Run without --dry-run to quarantine {len(corrupted_files)} corrupted files[/info]")
 
 @cli.command()
+@click.argument('output_path', type=click.Path(path_type=Path), default='Library.xml')
+@click.option('--overwrite', is_flag=True, help='Overwrite existing file')
+@click.option('--open-after', is_flag=True, help='Open Finder to show the exported file')
+def export(output_path: Path, overwrite: bool, open_after: bool) -> None:
+    """Export Library.xml from Apple Music
+    
+    This command automates the export of Library.xml from Apple Music.
+    Requires accessibility permissions for Terminal.
+    
+    Examples:
+        # Export to current directory
+        mfdr export
+        
+        # Export to specific location
+        mfdr export ~/Desktop/Library.xml
+        
+        # Overwrite existing file
+        mfdr export ~/Desktop/Library.xml --overwrite
+    """
+    from .apple_music import export_library_xml
+    
+    console.print(Panel.fit("📚 Exporting Library.xml from Apple Music", style="bold cyan"))
+    console.print()
+    
+    # Check if Apple Music is available
+    from .apple_music import is_music_app_available
+    if not is_music_app_available():
+        console.print("[error]❌ Apple Music is not running. Please open it first.[/error]")
+        return
+    
+    console.print(f"[info]Export location: {output_path.absolute()}[/info]")
+    console.print()
+    console.print("[warning]⚠️  This will control Apple Music using accessibility features.[/warning]")
+    console.print("[warning]   You may need to grant Terminal accessibility permissions.[/warning]")
+    console.print("[warning]   Do not use your computer while the export is in progress.[/warning]")
+    console.print()
+    
+    with console.status("[cyan]Exporting library...", spinner="dots"):
+        success, error_msg = export_library_xml(output_path, overwrite)
+    
+    if success:
+        console.print(f"[success]✅ Successfully exported Library.xml to: {output_path.absolute()}[/success]")
+        
+        # Get file size
+        if output_path.exists():
+            size_mb = output_path.stat().st_size / (1024 * 1024)
+            console.print(f"[info]   File size: {size_mb:.1f} MB[/info]")
+        
+        if open_after:
+            # Open Finder to show the file
+            import subprocess
+            subprocess.run(['open', '-R', str(output_path.absolute())])
+            console.print("[info]📂 Opened in Finder[/info]")
+    else:
+        console.print(f"[error]❌ Export failed: {error_msg}[/error]")
+        
+        if "accessibility" in str(error_msg).lower():
+            console.print()
+            console.print("[info]To enable accessibility permissions:[/info]")
+            console.print("1. Open System Preferences > Security & Privacy > Privacy")
+            console.print("2. Select 'Accessibility' from the left sidebar")
+            console.print("3. Click the lock and authenticate")
+            console.print("4. Add Terminal to the list and check the box")
+            console.print("5. Restart Terminal and try again")
+
+
+@cli.command()
 @click.argument('xml_path', type=click.Path(exists=True, path_type=Path))
 @click.option('--library-root', '-r', type=click.Path(path_type=Path),
               help='Override root path of Apple Music library (auto-detected from XML by default)')
@@ -705,11 +1268,20 @@ def sync(xml_path: Path, library_root: Optional[Path],
     
     # Auto-detect auto-add directory if not provided
     if not auto_add_dir:
-        auto_add_dir = library_root / "Automatically Add to Music.localized"
-        if not auto_add_dir.exists():
-            auto_add_dir = library_root / "Automatically Add to iTunes.localized"
+        # Try different possible locations based on the library root
+        possible_locations = [
+            library_root / "Automatically Add to Music.localized",
+            library_root / "Automatically Add to iTunes.localized",
+            library_root.parent / "Automatically Add to Music.localized",
+            library_root.parent / "Automatically Add to iTunes.localized",
+        ]
         
-        if auto_add_dir.exists():
+        for possible_path in possible_locations:
+            if possible_path.exists():
+                auto_add_dir = possible_path
+                break
+        
+        if auto_add_dir and auto_add_dir.exists():
             console.print(f"[info]📁 Auto-add directory: {auto_add_dir}[/info]")
         else:
             console.print("[error]❌ Could not find auto-add directory. Please specify with --auto-add-dir[/error]")

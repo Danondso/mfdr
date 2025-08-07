@@ -1,6 +1,6 @@
 [project]
 name = "mfdr"
-version = "0.2.0"
+version = "0.3.0"
 description = "Python CLI app for doctoring your music library"
 authors = [{name = "Danondso", email = "7014871+Danondso@users.noreply.github.com"}]
 license = {text = "MIT"}

@@ -20,37 +20,37 @@ class TrackMatcher:
     def __init__(self):
         self.completeness_checker = CompletenessChecker()
         
-        # Scoring weights (out of 100 total points)
+        # Scoring weights (out of 100 total points) - prioritize name matching
         self.weights = {
-            'exact_size': 25,
-            'close_size': 10,
-            'exact_duration': 20,
-            'close_duration': 15,
-            'reasonable_duration': 5,
-            'exact_track_name': 15,
-            'fuzzy_track_name': 8,
+            'exact_size': 15,  # Reduced - size can vary
+            'close_size': 5,
+            'exact_duration': 10,  # Reduced - duration not always available
+            'close_duration': 5,
+            'reasonable_duration': 2,
+            'exact_track_name': 40,  # INCREASED - this is what Finder uses
+            'fuzzy_track_name': 20,  # INCREASED - still good if fuzzy match
             'artist_in_filename': 10,
-            'artist_in_directory': 20,
-            'artist_in_parent_dir': 10,
-            'album_in_directory': 18,
-            'track_number_start': 12,
-            'track_number_anywhere': 5,
+            'artist_in_directory': 15,  # Good signal but not required
+            'artist_in_parent_dir': 5,
+            'album_in_directory': 10,
+            'track_number_start': 5,
+            'track_number_anywhere': 2,
             'proper_extension': 1,
-            'year_match': 3,
+            'year_match': 2,
         }
         # Maximum possible score: ~100 points
         
-        # Penalties
+        # Penalties - reduced to avoid blocking good matches
         self.penalties = {
-            'wrong_genre_keywords': 50,
-            'short_name_no_artist': 30,
-            'generic_mismatch': 20,
+            'wrong_genre_keywords': 20,  # Reduced from 50
+            'short_name_no_artist': 10,  # Reduced from 30
+            'generic_mismatch': 5,  # Reduced from 20
         }
         
-        # Minimum score thresholds (percentage-based) - made more lenient
-        self.min_score_with_artist = 20  # For showing recommendations (reduced from 30)
-        self.min_score_without_artist = 35  # For showing recommendations (reduced from 50)
-        self.auto_replace_threshold = 75  # High threshold for automatic replacement (reduced from 85)
+        # Minimum score thresholds (percentage-based) - much more lenient for Finder-like matching
+        self.min_score_with_artist = 10  # Very low threshold when we have artist
+        self.min_score_without_artist = 15  # Low threshold even without artist
+        self.auto_replace_threshold = 50  # Lower threshold for auto-replacement when name matches
     
     def find_best_match(self, track: LibraryTrack, candidates: List[FileCandidate]) -> Optional[FileCandidate]:
         """Find the best matching candidate for a track"""
@@ -152,9 +152,9 @@ class TrackMatcher:
                 score += self.weights['fuzzy_track_name']
                 details['components']['word_boundary_bonus'] = self.weights['fuzzy_track_name']
         else:
-            # Try fuzzy matching - made more lenient
+            # Try fuzzy matching - much more lenient for Finder-like behavior
             fuzzy_score = fuzz.partial_ratio(track_name, filename)
-            if fuzzy_score > 70:  # Reduced from 80 to 70
+            if fuzzy_score > 60:  # Reduced from 70 to 60 - be more forgiving
                 fuzzy_bonus = int(self.weights['fuzzy_track_name'] * (fuzzy_score / 100))
                 score += fuzzy_bonus
                 details['components']['fuzzy_track_name'] = fuzzy_bonus

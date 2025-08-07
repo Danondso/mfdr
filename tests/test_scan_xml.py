@@ -128,39 +128,29 @@ class TestXMLScan:
         auto_add_dir.mkdir()
         
         with patch('mfdr.main.LibraryXMLParser') as mock_parser_cls:
-            with patch('mfdr.main.FileManager') as mock_fm_cls:
-                with patch('mfdr.main.TrackMatcher') as mock_matcher_cls:
-                    with patch('shutil.copy2') as mock_copy:
-                        # Setup parser
-                        mock_parser = MagicMock()
-                        mock_parser.parse.return_value = [missing_track]
-                        mock_parser_cls.return_value = mock_parser
-                        
-                        # Setup file manager
-                        mock_fm = MagicMock()
-                        mock_candidate = MagicMock()
-                        mock_candidate.path = replacement_file
-                        mock_fm.search_files.return_value = [mock_candidate]
-                        mock_fm.file_index = [replacement_file]
-                        mock_fm_cls.return_value = mock_fm
-                        
-                        # Setup track matcher
-                        mock_matcher = MagicMock()
-                        # Fix: return candidate, score, and details as tuple
-                        mock_matcher.get_match_candidates_with_scores.return_value = [(mock_candidate, 95, {'components': {}})]
-                        mock_matcher_cls.return_value = mock_matcher
-                        
-                        result = runner.invoke(cli, [
-                            'scan', str(mock_xml_file),
-                            '--missing-only',
-                            '--replace',
-                            '-s', str(search_dir),
-                            '--auto-add-dir', str(auto_add_dir)
-                        ])
-                        
-                        assert result.exit_code == 0
-                        assert "Replaced Tracks" in result.output and "│ 1     │" in result.output
-                        mock_copy.assert_called_once()
+            with patch('mfdr.main.SimpleFileSearch') as mock_search_cls:
+                with patch('shutil.copy2') as mock_copy:
+                    # Setup parser
+                    mock_parser = MagicMock()
+                    mock_parser.parse.return_value = [missing_track]
+                    mock_parser_cls.return_value = mock_parser
+                    
+                    # Setup file search
+                    mock_search = MagicMock()
+                    mock_search.find_by_name_and_size.return_value = [replacement_file]
+                    mock_search_cls.return_value = mock_search
+                    
+                    result = runner.invoke(cli, [
+                        'scan', str(mock_xml_file),
+                        '--missing-only',
+                        '--replace',
+                        '-s', str(search_dir),
+                        '--auto-add-dir', str(auto_add_dir)
+                    ])
+                    
+                    assert result.exit_code == 0
+                    assert "Replaced Tracks" in result.output and "│ 1     │" in result.output
+                    mock_copy.assert_called_once()
     
     def test_scan_with_quarantine(self, runner, mock_xml_file, tmp_path):
         """Test scan with --quarantine flag"""
