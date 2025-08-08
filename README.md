@@ -164,6 +164,66 @@ Copies external tracks from Library.xml into your Apple Music library. The tool 
 **Options:**
 - `-dr, --dry-run` - Preview files to be copied
 - `-l, --limit N` - Process only first N tracks
+
+### `knit` - Album Completeness Analysis
+
+Analyzes your music library to find incomplete albums with missing tracks. Can optionally use MusicBrainz for accurate track listings and search for missing tracks in backup locations.
+
+```bash
+./venv/bin/python -m mfdr knit Library.xml [OPTIONS]
+```
+
+**Options:**
+- `-t, --threshold` - Completeness threshold (0-1). Only show albums below this percentage (default: 0.8)
+- `--min-tracks` - Minimum tracks required for an album to be analyzed (default: 3)
+- `-o, --output` - Save report to markdown file
+- `--dry-run` - Preview report without saving to file
+- `-i, --interactive` - Interactive mode - review albums one by one
+- `--use-musicbrainz` - Use MusicBrainz API for accurate track listings
+- `--acoustid-key` - AcoustID API key for fingerprinting (or set ACOUSTID_API_KEY env var)
+- `-f, --find` - Search for and copy missing tracks to auto-add folder
+- `-s, --search-dir` - Directory to search for replacement tracks
+- `-l, --limit` - Limit number of albums to process
+- `-v, --verbose` - Enable verbose output
+
+**Examples:**
+```bash
+# Basic analysis using track numbers
+./venv/bin/python -m mfdr knit Library.xml
+
+# Find albums less than 50% complete
+./venv/bin/python -m mfdr knit Library.xml --threshold 0.5
+
+# Use MusicBrainz for accurate track listings
+./venv/bin/python -m mfdr knit Library.xml --use-musicbrainz
+
+# Find and copy missing tracks using MusicBrainz
+./venv/bin/python -m mfdr knit Library.xml --use-musicbrainz --find -s /Volumes/Backup
+
+# Generate markdown report
+./venv/bin/python -m mfdr knit Library.xml --output missing-tracks.md
+
+# Interactive review of incomplete albums
+./venv/bin/python -m mfdr knit Library.xml --interactive
+```
+
+**How it works:**
+
+1. **Track Number Analysis** (default): Analyzes track numbers to find gaps (e.g., has tracks 1,2,4 but missing 3)
+2. **MusicBrainz Mode** (--use-musicbrainz): 
+   - Reads AcoustID fingerprints from your audio files
+   - Queries MusicBrainz for accurate album track listings
+   - Compares your tracks against the official track list
+   - Identifies missing tracks by title, not just number
+3. **Find Missing Tracks** (--find):
+   - Searches specified directory for missing tracks
+   - Batches replacements by album for efficiency
+   - Copies found tracks to Apple Music's auto-add folder
+
+**Requirements for MusicBrainz mode:**
+- Install with: `pip install musicbrainzngs pyacoustid`
+- Optional: Get free AcoustID API key from https://acoustid.org/api-key
+- FFmpeg must be installed for fingerprinting
 - `--auto-add-dir PATH` - Override auto-add folder (rarely needed, auto-detected from XML)
 
 ## Library Management

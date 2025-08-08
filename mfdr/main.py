@@ -11,6 +11,9 @@ import json
 from pathlib import Path
 from typing import Optional, List, Tuple
 from datetime import datetime
+from collections import defaultdict
+
+logger = logging.getLogger(__name__)
 
 from rich.console import Console
 from rich.panel import Panel
@@ -25,6 +28,7 @@ from .completeness_checker import CompletenessChecker
 from .library_xml_parser import LibraryXMLParser
 from .apple_music import open_playlist_in_music
 from .simple_file_search import SimpleFileSearch
+from .musicbrainz_client import MusicBrainzClient, HAS_MUSICBRAINZ, HAS_ACOUSTID
 
 # Initialize Rich console
 console = Console()
@@ -1411,6 +1415,414 @@ def sync(xml_path: Path, library_root: Optional[Path],
     if dry_run and copied > 0:
         console.print()
         console.print(f"[info]💡 Run without --dry-run to copy {copied} tracks[/info]")
+
+
+@cli.command()
+@click.argument('xml_path', type=click.Path(exists=True, path_type=Path))
+@click.option('--threshold', '-t', type=float, default=0.8,
+              help='Completeness threshold (0-1). Only show albums below this completion percentage')
+@click.option('--min-tracks', type=int, default=3,
+              help='Minimum tracks required for an album to be analyzed')
+@click.option('--output', '-o', type=click.Path(path_type=Path),
+              help='Save report to markdown file')
+@click.option('--dry-run', is_flag=True,
+              help='Preview report without saving to file')
+@click.option('--interactive', '-i', is_flag=True,
+              help='Interactive mode - review albums one by one')
+@click.option('--checkpoint', is_flag=True,
+              help='Enable checkpoint/resume for large libraries')
+@click.option('--limit', '-l', type=int,
+              help='Limit number of albums to process')
+@click.option('--verbose', '-v', is_flag=True,
+              help='Enable verbose output')
+@click.option('--use-musicbrainz', is_flag=True,
+              help='Use MusicBrainz API to get accurate album track listings')
+@click.option('--acoustid-key', type=str, envvar='ACOUSTID_API_KEY',
+              help='AcoustID API key for fingerprinting (or set ACOUSTID_API_KEY env var)')
+@click.option('--find', '-f', is_flag=True,
+              help='Search for and copy missing tracks to auto-add folder')
+@click.option('--search-dir', '-s', type=click.Path(exists=True, path_type=Path),
+              help='Directory to search for replacement tracks')
+def knit(xml_path: Path, threshold: float, min_tracks: int, output: Optional[Path],
+         dry_run: bool, interactive: bool, checkpoint: bool, limit: Optional[int],
+         verbose: bool, use_musicbrainz: bool, acoustid_key: Optional[str],
+         find: bool, search_dir: Optional[Path]) -> None:
+    """Analyze album completeness in your music library
+    
+    This command identifies incomplete albums by finding gaps in track numbers.
+    It can optionally use MusicBrainz to get accurate track listings.
+    
+    Examples:
+        # Basic analysis using track numbers
+        mfdr knit Library.xml
+        
+        # Use MusicBrainz for accurate track listings
+        mfdr knit Library.xml --use-musicbrainz
+        
+        # Find and copy missing tracks
+        mfdr knit Library.xml --use-musicbrainz --find -s /Volumes/Backup
+        
+        # Generate markdown report
+        mfdr knit Library.xml --output missing-tracks.md
+        
+        # Interactive review
+        mfdr knit Library.xml --interactive
+    """
+    if verbose:
+        setup_logging(True)
+    
+    console.print(Panel.fit("🧶 Album Completeness Analysis", style="bold cyan"))
+    console.print()
+    
+    # Check MusicBrainz availability
+    if use_musicbrainz:
+        if not HAS_MUSICBRAINZ:
+            console.print("[warning]⚠️  MusicBrainz support not available. Install with: pip install musicbrainzngs[/warning]")
+            use_musicbrainz = False
+        elif not HAS_ACOUSTID and not acoustid_key:
+            console.print("[warning]⚠️  AcoustID support not available. Install with: pip install pyacoustid[/warning]")
+            console.print("[info]   Or provide --acoustid-key to use fingerprinting[/info]")
+    
+    # Initialize MusicBrainz client if needed
+    mb_client = None
+    if use_musicbrainz:
+        mb_client = MusicBrainzClient(acoustid_api_key=acoustid_key)
+        console.print("[info]🎵 Using MusicBrainz for accurate track listings[/info]")
+        console.print()
+    
+    # Parse Library.xml
+    parser = LibraryXMLParser(xml_path)
+    
+    with console.status("[cyan]Loading tracks from Library.xml...", spinner="dots"):
+        tracks = parser.parse()
+    
+    console.print(f"[success]✅ Loaded {len(tracks)} tracks[/success]")
+    console.print()
+    
+    # Group tracks by album
+    albums = defaultdict(list)
+    
+    for track in tracks:
+        # Skip tracks without album or track number
+        if not track.album or track.track_number is None:
+            continue
+        
+        # Use artist-album as key to handle compilation albums
+        album_key = f"{track.artist or 'Various Artists'} - {track.album}"
+        albums[album_key].append(track)
+    
+    # Analyze album completeness
+    incomplete_albums = []
+    skipped_albums = []
+    mb_cache = {}  # Cache MusicBrainz lookups per album
+    
+    with Progress(
+        SpinnerColumn(),
+        TextColumn("[progress.description]{task.description}"),
+        BarColumn(style="cyan"),
+        MofNCompleteColumn(),
+        console=console
+    ) as progress:
+        
+        analyze_task = progress.add_task("[cyan]Analyzing albums...", total=len(albums))
+        
+        for album_key, album_tracks in albums.items():
+            # Skip albums with too few tracks
+            if len(album_tracks) < min_tracks:
+                skipped_albums.append((album_key, len(album_tracks)))
+                progress.advance(analyze_task)
+                continue
+            
+            artist, album_name = album_key.rsplit(' - ', 1)
+            
+            # Try MusicBrainz lookup if enabled
+            mb_album_info = None
+            if use_musicbrainz and mb_client:
+                # Use the first track with a file path for fingerprinting
+                track_with_file = next((t for t in album_tracks if t.file_path and t.file_path.exists()), None)
+                
+                if track_with_file:
+                    try:
+                        progress.update(analyze_task, description=f"[cyan]Getting MusicBrainz info for {album_name[:30]}...")
+                        mb_album_info = mb_client.get_album_info_from_track(
+                            track_with_file.file_path,
+                            fallback_artist=artist,
+                            fallback_album=album_name
+                        )
+                        if mb_album_info:
+                            mb_cache[album_key] = mb_album_info
+                    except Exception as e:
+                        logger.warning(f"MusicBrainz lookup failed for {album_key}: {e}")
+            
+            # Determine expected tracks and completeness
+            if mb_album_info:
+                # Use MusicBrainz data
+                expected_tracks = mb_album_info.total_tracks
+                mb_track_titles = {t['title'].lower() for t in mb_album_info.track_list}
+                local_track_titles = {t.name.lower() for t in album_tracks if t.name}
+                matched_tracks = len(mb_track_titles & local_track_titles)
+                completeness = matched_tracks / expected_tracks if expected_tracks > 0 else 0
+                
+                # Find missing track titles
+                missing_track_titles = sorted(mb_track_titles - local_track_titles)
+                missing_info = missing_track_titles[:10]  # Show first 10
+            else:
+                # Fall back to track number analysis
+                track_numbers = [t.track_number for t in album_tracks if t.track_number is not None]
+                if not track_numbers:
+                    progress.advance(analyze_task)
+                    continue
+                
+                highest_track = max(track_numbers)
+                actual_tracks = len(set(track_numbers))
+                expected_tracks = highest_track
+                completeness = actual_tracks / highest_track
+                
+                # Find missing track numbers
+                present_numbers = set(track_numbers)
+                all_numbers = set(range(1, highest_track + 1))
+                missing_numbers = sorted(all_numbers - present_numbers)
+                missing_info = missing_numbers
+            
+            # Check if below threshold
+            if completeness < threshold:
+                incomplete_albums.append({
+                    'artist': artist,
+                    'album': album_name,
+                    'completeness': completeness,
+                    'tracks_present': len(album_tracks),
+                    'tracks_expected': expected_tracks,
+                    'missing_tracks': missing_info,
+                    'year': album_tracks[0].year if album_tracks else None,
+                    'musicbrainz_info': mb_album_info,
+                    'album_tracks': album_tracks  # Store for replacement search
+                })
+            
+            progress.advance(analyze_task)
+    
+    # Sort by completeness (least complete first)
+    incomplete_albums.sort(key=lambda x: x['completeness'])
+    
+    # Apply limit if specified
+    if limit and len(incomplete_albums) > limit:
+        incomplete_albums = incomplete_albums[:limit]
+        console.print(f"[info]Limit: {limit} albums[/info]")
+        console.print()
+    
+    # Handle interactive mode
+    if interactive:
+        marked_albums = []
+        console.print(Panel.fit("📋 Interactive Album Review", style="bold cyan"))
+        console.print()
+        console.print("[info]Commands: (s)kip, (m)ark, (q)uit[/info]")
+        console.print()
+        
+        for idx, album in enumerate(incomplete_albums):
+            console.print(f"[bold]Album {idx + 1}/{len(incomplete_albums)}:[/bold]")
+            console.print(f"  Artist: {album['artist']}")
+            console.print(f"  Album: {album['album']}")
+            if album['year']:
+                console.print(f"  Year: {album['year']}")
+            console.print(f"  Completeness: {album['completeness']:.1%}")
+            console.print(f"  Tracks: {album['tracks_present']}/{album['tracks_expected']}")
+            console.print(f"  Missing: {', '.join(map(str, album['missing_tracks'][:10]))}")
+            if len(album['missing_tracks']) > 10:
+                console.print(f"          ... and {len(album['missing_tracks']) - 10} more")
+            console.print()
+            
+            choice = click.prompt("Action", type=click.Choice(['s', 'm', 'q']), default='s')
+            
+            if choice == 'm':
+                marked_albums.append(album)
+            elif choice == 'q':
+                break
+            
+            console.print()
+        
+        console.print(f"[info]Marked {len(marked_albums)} albums for attention[/info]")
+        incomplete_albums = marked_albums if marked_albums else incomplete_albums
+    
+    # Generate report
+    if not incomplete_albums:
+        console.print("[success]✨ All albums in your library appear to be complete![/success]")
+        return
+    
+    console.print(f"[warning]Found {len(incomplete_albums)} incomplete albums[/warning]")
+    console.print()
+    
+    # Handle finding missing tracks if requested
+    if find and incomplete_albums:
+        if not search_dir:
+            console.print("[error]❌ --search-dir is required when using --find[/error]")
+            return
+        
+        console.print()
+        console.print(Panel.fit("🔍 Searching for Missing Tracks", style="bold cyan"))
+        console.print()
+        
+        # Batch process all incomplete albums
+        total_missing = sum(len(album['missing_tracks']) for album in incomplete_albums)
+        console.print(f"[info]Searching for {total_missing} missing tracks across {len(incomplete_albums)} albums[/info]")
+        console.print(f"[info]Search directory: {search_dir}[/info]")
+        console.print()
+        
+        # Initialize file search
+        file_search = SimpleFileSearch(search_dir)
+        replacements_found = []
+        
+        with Progress(
+            SpinnerColumn(),
+            TextColumn("[progress.description]{task.description}"),
+            BarColumn(style="cyan"),
+            MofNCompleteColumn(),
+            console=console
+        ) as progress:
+            
+            search_task = progress.add_task("[cyan]Searching for replacements...", total=len(incomplete_albums))
+            
+            for album in incomplete_albums:
+                album_replacements = []
+                progress.update(search_task, description=f"[cyan]Searching for {album['album'][:30]}...")
+                
+                # Search for missing tracks
+                if album.get('musicbrainz_info'):
+                    # Use MusicBrainz track titles for search
+                    mb_info = album['musicbrainz_info']
+                    for track_info in mb_info.track_list:
+                        track_title = track_info['title']
+                        # Check if we already have this track
+                        if track_title.lower() not in {t.name.lower() for t in album['album_tracks'] if t.name}:
+                            # Search for this track
+                            candidates = file_search.find_track(
+                                track_name=track_title,
+                                artist=album['artist'],
+                                album=album['album']
+                            )
+                            if candidates:
+                                best_candidate = max(candidates, key=lambda c: c.score)
+                                if best_candidate.score >= 70:  # Reasonable threshold
+                                    album_replacements.append({
+                                        'track_title': track_title,
+                                        'file_path': best_candidate.path,
+                                        'score': best_candidate.score
+                                    })
+                else:
+                    # Use track numbers for search
+                    for track_num in album['missing_tracks']:
+                        # Try to find track by number and album
+                        candidates = file_search.find_by_pattern(
+                            f"*{album['artist']}*{track_num:02d}*",
+                            f"*{album['album']}*{track_num:02d}*"
+                        )
+                        if candidates:
+                            album_replacements.append({
+                                'track_number': track_num,
+                                'file_path': candidates[0],
+                                'score': 80  # Pattern match score
+                            })
+                
+                if album_replacements:
+                    replacements_found.append({
+                        'album': album,
+                        'replacements': album_replacements
+                    })
+                
+                progress.advance(search_task)
+        
+        # Report findings
+        if replacements_found:
+            console.print()
+            console.print(f"[success]✅ Found replacements for {len(replacements_found)} albums[/success]")
+            console.print()
+            
+            # Auto-add directory detection
+            auto_add_dir = parser.music_folder / "Automatically Add to Music.localized" if parser.music_folder else None
+            if not auto_add_dir or not auto_add_dir.exists():
+                console.print("[warning]⚠️  Could not find auto-add directory. Specify with --auto-add-dir[/warning]")
+            else:
+                console.print(f"[info]Auto-add directory: {auto_add_dir}[/info]")
+                
+                if not dry_run:
+                    # Copy files in batches per album
+                    import shutil
+                    copied_count = 0
+                    
+                    for replacement_info in replacements_found:
+                        album_info = replacement_info['album']
+                        console.print(f"\n[bold]{album_info['artist']} - {album_info['album']}[/bold]")
+                        
+                        for replacement in replacement_info['replacements']:
+                            src_path = replacement['file_path']
+                            dst_path = auto_add_dir / src_path.name
+                            
+                            try:
+                                shutil.copy2(src_path, dst_path)
+                                copied_count += 1
+                                track_name = replacement.get('track_title', f"Track {replacement.get('track_number', '?')}")
+                                console.print(f"  ✓ Copied: {track_name} (score: {replacement['score']})")
+                            except Exception as e:
+                                console.print(f"  ✗ Failed to copy {src_path.name}: {e}")
+                    
+                    console.print()
+                    console.print(f"[success]✅ Copied {copied_count} tracks to auto-add folder[/success]")
+                else:
+                    console.print("[info]Dry run - no files copied[/info]")
+        else:
+            console.print("[warning]No replacement tracks found[/warning]")
+        
+        console.print()
+    
+    # Display results
+    if not output:
+        # Terminal output
+        for album in incomplete_albums[:10]:  # Show first 10 in terminal
+            console.print(f"[bold]{album['artist']}[/bold]")
+            console.print(f"  Album: {album['album']}")
+            if album['year']:
+                console.print(f"  Year: {album['year']}")
+            console.print(f"  Completeness: {album['completeness']:.1%}")
+            console.print(f"  Missing tracks: {', '.join(map(str, album['missing_tracks'][:10]))}")
+            if len(album['missing_tracks']) > 10:
+                console.print(f"                  ... and {len(album['missing_tracks']) - 10} more")
+            console.print()
+        
+        if len(incomplete_albums) > 10:
+            console.print(f"[info]... and {len(incomplete_albums) - 10} more albums[/info]")
+    
+    # Save report if requested
+    if output:
+        if dry_run:
+            console.print(f"[info]Would save report to: {output}[/info]")
+        else:
+            report_lines = ["# Missing Tracks Report", ""]
+            report_lines.append(f"Generated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+            report_lines.append(f"Total incomplete albums: {len(incomplete_albums)}")
+            report_lines.append("")
+            
+            # Group by artist for better organization
+            by_artist = defaultdict(list)
+            for album in incomplete_albums:
+                by_artist[album['artist']].append(album)
+            
+            for artist in sorted(by_artist.keys()):
+                report_lines.append(f"## {artist}")
+                report_lines.append("")
+                
+                for album in by_artist[artist]:
+                    report_lines.append(f"### {album['album']}")
+                    if album['year']:
+                        report_lines.append(f"**Year:** {album['year']}")
+                    report_lines.append(f"**Completeness:** {album['completeness']:.1%} ({album['tracks_present']}/{album['tracks_expected']} tracks)")
+                    report_lines.append(f"**Missing tracks:** {', '.join(map(str, album['missing_tracks']))}")
+                    report_lines.append("")
+            
+            output.write_text('\n'.join(report_lines))
+            console.print(f"[success]✅ Report saved to: {output}[/success]")
+    
+    # Show statistics
+    if skipped_albums or min_tracks > 0:
+        console.print()
+        console.print(f"[info]Albums Skipped (too small): {len(skipped_albums)}[/info]")
 
 if __name__ == "__main__":
     cli()
