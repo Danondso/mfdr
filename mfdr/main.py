@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import Optional, List, Tuple
 from datetime import datetime
 from collections import defaultdict
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 logger = logging.getLogger(__name__)
 
@@ -28,6 +29,7 @@ from .completeness_checker import CompletenessChecker
 from .library_xml_parser import LibraryXMLParser
 from .apple_music import open_playlist_in_music
 from .simple_file_search import SimpleFileSearch
+from .knit_optimizer import batch_process_albums
 from .musicbrainz_client import MusicBrainzClient, HAS_MUSICBRAINZ, HAS_ACOUSTID
 
 # Initialize Rich console
@@ -1518,22 +1520,208 @@ def knit(xml_path: Path, threshold: float, min_tracks: int, output: Optional[Pat
     console.print(f"[success]✅ Loaded {len(tracks)} tracks[/success]")
     console.print()
     
-    # Group tracks by album
+    # Group tracks by album with deduplication
     albums = defaultdict(list)
+    seen_tracks = set()  # Track (artist, album, track_num) to avoid duplicates
     
     for track in tracks:
         # Skip tracks without album or track number
         if not track.album or track.track_number is None:
             continue
         
-        # Use artist-album as key to handle compilation albums
-        album_key = f"{track.artist or 'Various Artists'} - {track.album}"
+        # Create unique track identifier
+        track_id = (
+            (track.artist or 'Various Artists').lower().strip(),
+            track.album.lower().strip(),
+            track.track_number
+        )
+        
+        # Skip if we've already seen this exact track
+        if track_id in seen_tracks:
+            continue
+        seen_tracks.add(track_id)
+        
+        # Use normalized artist-album as key
+        artist_normalized = (track.artist or 'Various Artists').strip()
+        album_normalized = track.album.strip()
+        album_key = f"{artist_normalized} - {album_normalized}"
         albums[album_key].append(track)
+    
+    # Pre-filter albums for batch processing
+    albums_to_process, skipped_albums = batch_process_albums(albums, min_tracks)
+    
+    # Deduplicate albums_to_process (in case of variations)
+    unique_albums = []
+    seen_album_keys = set()
+    for album_data in albums_to_process:
+        album_key = album_data[0].lower()  # Normalize for comparison
+        if album_key not in seen_album_keys:
+            unique_albums.append(album_data)
+            seen_album_keys.add(album_key)
+    albums_to_process = unique_albums
+    
+    console.print(f"[info]Processing {len(albums_to_process)} albums ({len(skipped_albums)} skipped)[/info]")
+    
+    # MusicBrainz lookups if enabled
+    mb_cache = {}
+    existing_cache = {}  # Initialize to track what was already cached
+    if use_musicbrainz and mb_client:
+        # Load any existing cache first
+        from pathlib import Path
+        cache_file = Path.home() / ".cache" / "mfdr" / "knit_mb_cache.json"
+        if cache_file.exists():
+            try:
+                import json
+                with open(cache_file) as f:
+                    existing_cache = json.load(f)
+                    mb_cache.update(existing_cache)
+                    console.print(f"[info]Loaded {len(existing_cache)} cached MusicBrainz entries[/info]")
+                    if verbose:
+                        logger.info(f"📂 Cache loaded from: {cache_file}")
+                        # Show sample of cache keys for debugging
+                        sample_keys = list(existing_cache.keys())[:3]
+                        if sample_keys:
+                            logger.debug(f"Sample cache keys: {sample_keys}")
+            except json.JSONDecodeError as e:
+                console.print(f"[warning]Cache file is corrupted, starting fresh: {e}[/warning]")
+                if verbose:
+                    logger.warning(f"Removing corrupted cache file: {cache_file}")
+                cache_file.unlink()  # Remove corrupted file
+                existing_cache = {}
+            except Exception as e:
+                console.print(f"[warning]Could not load cache: {e}[/warning]")
+                existing_cache = {}
+        
+        # Filter out albums we already have cached
+        albums_needing_lookup = []
+        cache_hits = 0
+        for album_data in albums_to_process:
+            album_key = album_data[0]
+            if album_key not in mb_cache:
+                albums_needing_lookup.append(album_data)
+                if verbose and len(albums_needing_lookup) <= 3:
+                    # Show first few keys that need lookup for debugging
+                    logger.debug(f"Need lookup for: {album_key[:60]}")
+            else:
+                cache_hits += 1
+        
+        if verbose and cache_hits > 0:
+            logger.info(f"🎯 Found {cache_hits} albums already in cache, skipping their lookups")
+        
+        if not albums_needing_lookup:
+            console.print("[success]✓ All albums already cached from previous runs[/success]")
+            if verbose:
+                logger.info(f"🎯 100% cache hit rate - no new lookups needed")
+        else:
+            console.print(f"[cyan]Fetching MusicBrainz data for {len(albums_needing_lookup)} new albums...[/cyan]")
+            console.print(f"[info]({len(mb_cache)} already cached)[/info]")
+            
+            # Estimate time for new lookups only
+            per_album_time = 0.8 if mb_client.authenticated else 1.5  # More realistic estimates
+            estimated_minutes = (len(albums_needing_lookup) * per_album_time) / 60
+            console.print(f"[info]Estimated time: {estimated_minutes:.1f} minutes. Press Ctrl+C to skip.[/info]")
+            if verbose:
+                logger.info(f"🔍 Will lookup {len(albums_needing_lookup)} new albums, using {'authenticated' if mb_client.authenticated else 'anonymous'} access")
+        
+        if verbose:
+            logger.info(f"🎵 Starting MusicBrainz lookups for {len(albums_to_process)} albums")
+            logger.info(f"🔐 Authenticated: {mb_client.authenticated}")
+            logger.info(f"📊 Cache contains {len(mb_cache)} existing entries")
+        
+        # Import at function level to avoid circular imports
+        from rich.progress import track
+        from .knit_optimizer import fetch_mb_info_for_album
+        from concurrent.futures import ThreadPoolExecutor, TimeoutError as FutureTimeoutError
+        
+        # Process with progress display
+        failed_count = 0
+        success_count = 0
+        if albums_needing_lookup:
+            try:
+                for album_data in track(albums_needing_lookup, description="[cyan]Fetching album data..."):
+                    album_key = album_data[0]
+                    
+                    # Use thread-based timeout for better cross-platform compatibility
+                    try:
+                        with ThreadPoolExecutor(max_workers=1) as executor:
+                            future = executor.submit(fetch_mb_info_for_album, album_data, mb_client, verbose)
+                            _, mb_info = future.result(timeout=15)  # 15 second timeout per album
+                            
+                        if mb_info:
+                            mb_cache[album_key] = mb_info
+                            success_count += 1
+                            if verbose:
+                                logger.info(f"✓ Got MusicBrainz info for: {album_key[:60]}")
+                        else:
+                            if verbose:
+                                logger.debug(f"✗ No MusicBrainz info found for: {album_key[:60]}")
+                                
+                    except FutureTimeoutError:
+                        failed_count += 1
+                        if verbose:
+                            logger.warning(f"⏱️ Timeout for: {album_key[:50]}")
+                        if failed_count > 10:
+                            console.print("[warning]Too many timeouts, skipping remaining lookups[/warning]")
+                            break
+                    except Exception as e:
+                        failed_count += 1
+                        if verbose:
+                            logger.warning(f"✗ Failed: {album_key[:50]}: {str(e)[:50]}")
+                        if failed_count > 10:
+                            console.print("[warning]Too many failures, skipping remaining lookups[/warning]")
+                            break
+                    
+                    # Rate limiting - more conservative
+                    if not mb_client.authenticated:
+                        time.sleep(1.0)  # 1 second between requests for anonymous
+                    else:
+                        time.sleep(0.1)  # Small delay even for authenticated
+                        
+            except KeyboardInterrupt:
+                console.print("\n[warning]MusicBrainz lookup interrupted by user[/warning]")
+                if verbose:
+                    logger.info(f"⚠️ Interrupted after {success_count} successful lookups and {failed_count} failures")
+            except Exception as e:
+                console.print(f"[error]MusicBrainz lookup error: {str(e)[:100]}[/error]")
+                if verbose:
+                    logger.error(f"💥 Lookup process failed: {e}")
+        
+        # Always save cache after processing (including both new and existing entries)
+        # This fixes the issue where cache wasn't growing between runs
+        # Save OUTSIDE the albums_needing_lookup block so it saves even when all cached
+        if mb_cache:
+            try:
+                cache_file.parent.mkdir(parents=True, exist_ok=True)
+                import json
+                import tempfile
+                
+                # Use atomic write to prevent corruption
+                with tempfile.NamedTemporaryFile(mode='w', dir=cache_file.parent, delete=False) as tmp:
+                    json.dump(mb_cache, tmp, indent=2)
+                    tmp_path = Path(tmp.name)
+                
+                # Atomically replace the old cache file
+                tmp_path.replace(cache_file)
+                
+                new_count = success_count if 'success_count' in locals() else 0
+                if verbose:
+                    logger.info(f"💾 Saved {len(mb_cache)} total entries to cache ({new_count} new, {len(mb_cache)-new_count} existing)")
+            except Exception as e:
+                console.print(f"[error]Could not save cache: {e}[/error]")
+                if verbose:
+                    logger.error(f"Cache save failed: {e}")
+        
+        console.print(f"[success]✓ Cached {len(mb_cache)} MusicBrainz album entries[/success]")
+        if verbose:
+            new_count = success_count if 'success_count' in locals() else 0
+            fail_count = failed_count if 'failed_count' in locals() else 0
+            hit_rate = ((len(mb_cache) - new_count) * 100) / len(albums_to_process) if albums_to_process else 0
+            logger.info(f"📊 MusicBrainz stats: {new_count} new lookups, {len(mb_cache)-new_count} cache hits ({hit_rate:.1f}% hit rate)")
+            if fail_count > 0:
+                logger.info(f"❌ Failed lookups: {fail_count} (timeouts + errors)")
     
     # Analyze album completeness
     incomplete_albums = []
-    skipped_albums = []
-    mb_cache = {}  # Cache MusicBrainz lookups per album
     
     with Progress(
         SpinnerColumn(),
@@ -1543,38 +1731,13 @@ def knit(xml_path: Path, threshold: float, min_tracks: int, output: Optional[Pat
         console=console
     ) as progress:
         
-        analyze_task = progress.add_task("[cyan]Analyzing albums...", total=len(albums))
+        analyze_task = progress.add_task("[cyan]Analyzing album completeness...", total=len(albums_to_process))
         
-        for album_key, album_tracks in albums.items():
-            # Skip albums with too few tracks
-            if len(album_tracks) < min_tracks:
-                skipped_albums.append((album_key, len(album_tracks)))
-                progress.advance(analyze_task)
-                continue
-            
+        for album_key, album_tracks in albums_to_process:
             artist, album_name = album_key.rsplit(' - ', 1)
             
-            # Try MusicBrainz lookup if enabled
-            mb_album_info = None
-            if use_musicbrainz and mb_client:
-                # Use the first track with a file path for fingerprinting
-                track_with_file = next((t for t in album_tracks if t.file_path and t.file_path.exists()), None)
-                
-                if track_with_file:
-                    try:
-                        progress.update(analyze_task, description=f"[cyan]Getting MusicBrainz info for {album_name[:30]}...")
-                        mb_album_info = mb_client.get_album_info_from_track(
-                            track_with_file.file_path,
-                            artist=artist,
-                            album=album_name,
-                            year=album_tracks[0].year if album_tracks else None,
-                            use_stored_fingerprint=True,  # Use the stored AcoustID from metadata
-                            generate_fingerprint=False     # Don't generate new fingerprints
-                        )
-                        if mb_album_info:
-                            mb_cache[album_key] = mb_album_info
-                    except Exception as e:
-                        logger.warning(f"MusicBrainz lookup failed for {album_key}: {e}")
+            # Get cached MusicBrainz data
+            mb_album_info = mb_cache.get(album_key) if use_musicbrainz else None
             
             # Determine expected tracks and completeness
             if mb_album_info:
@@ -1585,9 +1748,9 @@ def knit(xml_path: Path, threshold: float, min_tracks: int, output: Optional[Pat
                 matched_tracks = len(mb_track_titles & local_track_titles)
                 completeness = matched_tracks / expected_tracks if expected_tracks > 0 else 0
                 
-                # Find missing track titles
+                # Find missing track titles (keep all for search)
                 missing_track_titles = sorted(mb_track_titles - local_track_titles)
-                missing_info = missing_track_titles[:10]  # Show first 10
+                missing_info = missing_track_titles  # Keep all for searching
                 
                 if verbose and missing_track_titles:
                     logger.info(f"Album: {artist} - {album_name}")
@@ -1713,109 +1876,66 @@ def knit(xml_path: Path, threshold: float, min_tracks: int, output: Optional[Pat
         console.print()
         
         # Initialize file search
+        console.print("[cyan]Indexing search directory...[/cyan]")
         file_search = SimpleFileSearch(search_dir)
-        replacements_found = []
         
-        with Progress(
-            SpinnerColumn(),
-            TextColumn("[progress.description]{task.description}"),
-            BarColumn(style="cyan"),
-            MofNCompleteColumn(),
-            console=console
-        ) as progress:
+        # Search for missing tracks 
+        console.print(f"[cyan]Searching for missing tracks in {len(incomplete_albums)} albums...[/cyan]")
+        
+        # Sequential search for stability
+        replacements_found = []
+        from rich.progress import track
+        
+        for album in track(incomplete_albums, description="[cyan]Searching albums..."):
+            # Determine what to search for
+            tracks_to_search = []
+            if album.get('musicbrainz_info'):
+                mb_info = album['musicbrainz_info']
+                existing = {t.name.lower() for t in album.get('album_tracks', []) if hasattr(t, 'name') and t.name}
+                tracks_to_search = [
+                    t['title'] for t in mb_info.track_list 
+                    if t['title'].lower() not in existing
+                ][:10]  # Limit to 10 tracks per album
+            else:
+                tracks_to_search = album.get('missing_tracks', [])[:10]
             
-            search_task = progress.add_task("[cyan]Searching for replacements...", total=len(incomplete_albums))
+            if not tracks_to_search:
+                continue
             
-            for album in incomplete_albums:
-                album_replacements = []
-                progress.update(search_task, description=f"[cyan]Searching for {album['album'][:30]}...")
-                
-                # Search for missing tracks
-                if album.get('musicbrainz_info'):
-                    # Use MusicBrainz track titles for search
-                    mb_info = album['musicbrainz_info']
-                    for track_info in mb_info.track_list:
-                        track_title = track_info['title']
-                        # Check if we already have this track
-                        if track_title.lower() not in {t.name.lower() for t in album['album_tracks'] if t.name}:
-                            # Search for this track by name
-                            if verbose:
-                                logger.debug(f"    Searching for: {track_title}")
-                            candidates = file_search.find_by_name(track_title, artist=album['artist'])
-                            if candidates:
-                                if verbose:
-                                    logger.debug(f"      Found {len(candidates)} candidates")
-                                # Score each candidate
-                                scored_candidates = []
-                                for candidate_path in candidates[:20]:  # Limit to 20 candidates
-                                    score = score_candidate(
-                                        track=type('Track', (), {
-                                            'name': track_title,
-                                            'artist': album['artist'],
-                                            'album': album['album'],
-                                            'size': None
-                                        })(),
-                                        candidate_path=candidate_path
-                                    )
-                                    scored_candidates.append((candidate_path, score))
-                                
-                                # Get best candidate
-                                if scored_candidates:
-                                    best_path, best_score = max(scored_candidates, key=lambda x: x[1])
-                                    if best_score >= 70:  # Reasonable threshold
-                                        album_replacements.append({
-                                            'track_title': track_title,
-                                            'file_path': best_path,
-                                            'score': best_score
-                                        })
-                                        if verbose:
-                                            logger.info(f"      ✓ FOUND: {track_title}")
-                                            logger.info(f"        File: {best_path}")
-                                            logger.info(f"        Score: {best_score}")
-                                    elif verbose:
-                                        logger.debug(f"      ✗ Best score too low ({best_score}) for {track_title}")
-                else:
-                    # Use track numbers for search
-                    for track_num in album['missing_tracks']:
-                        # Try to find track by name including track number
-                        search_terms = [
-                            f"{track_num:02d}",  # 01, 02, etc
-                            f"{track_num}",      # 1, 2, etc
-                            f"track {track_num}",
-                            f"track{track_num:02d}"
-                        ]
-                        
-                        for search_term in search_terms:
-                            candidates = file_search.find_by_name(search_term, artist=album['artist'])
-                            if candidates:
-                                # Filter candidates that likely match this album
-                                album_candidates = []
-                                for candidate_path in candidates[:10]:
-                                    # Check if album name or artist is in the path
-                                    path_str = str(candidate_path).lower()
-                                    if (album['album'].lower() in path_str or 
-                                        album['artist'].lower() in path_str):
-                                        album_candidates.append(candidate_path)
-                                
-                                if album_candidates:
-                                    album_replacements.append({
-                                        'track_number': track_num,
-                                        'file_path': album_candidates[0],
-                                        'score': 75  # Pattern match score
-                                    })
-                                    break  # Found a match, stop searching
-                
-                if album_replacements:
-                    replacements_found.append({
-                        'album': album,
-                        'replacements': album_replacements
-                    })
-                    if verbose:
-                        logger.info(f"  ✓ Found {len(album_replacements)} replacements for {album['artist']} - {album['album']}")
-                elif verbose and album.get('missing_tracks'):
-                    logger.debug(f"  ✗ No replacements found for {album['artist']} - {album['album']}")
-                
-                progress.advance(search_task)
+            album_replacements = []
+            for track_info in tracks_to_search:
+                if isinstance(track_info, str):
+                    # Search by title
+                    candidates = file_search.find_by_name(track_info, artist=album.get('artist'))
+                    if candidates:
+                        # Quick scoring
+                        for candidate_path in candidates[:5]:  # Check only top 5
+                            mock_track = type('Track', (), {
+                                'name': track_info,
+                                'artist': album.get('artist'),
+                                'album': album.get('album'),
+                                'size': None
+                            })()
+                            score = score_candidate(track=mock_track, candidate_path=candidate_path)
+                            if score >= 70:
+                                album_replacements.append({
+                                    'track_title': track_info,
+                                    'file_path': candidate_path,
+                                    'score': score
+                                })
+                                break
+            
+            if album_replacements:
+                replacements_found.append({
+                    'album': album,
+                    'replacements': album_replacements
+                })
+                if verbose:
+                    logger.info(f"Found {len(album_replacements)} tracks for {album.get('artist', 'Unknown')[:30]}")
+        
+        if verbose:
+            total_found = sum(len(r['replacements']) for r in replacements_found)
+            logger.info(f"Found {total_found} replacement tracks across {len(replacements_found)} albums")
         
         # Report findings
         if replacements_found:
