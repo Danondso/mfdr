@@ -12,6 +12,8 @@ A fast, efficient CLI tool for checking music file integrity and managing your A
 
 - **Audio Integrity Checking** - Detect corrupted, truncated, and DRM-protected files
 - **XML Library Scanning** - Fast scanning using exported Library.xml files
+- **Album Completeness Analysis** - Find incomplete albums with missing tracks
+- **MusicBrainz Integration** - Get accurate track listings using audio fingerprinting
 - **Missing Track Detection** - Find and replace missing tracks from backup locations
 - **Interactive Selection Mode** - Manually choose replacements from up to 20 candidates
 - **Automatic Library Cleanup** - Remove replaced missing tracks from Apple Music
@@ -179,12 +181,13 @@ Analyzes your music library to find incomplete albums with missing tracks. Can o
 - `-o, --output` - Save report to markdown file
 - `--dry-run` - Preview report without saving to file
 - `-i, --interactive` - Interactive mode - review albums one by one
-- `--use-musicbrainz` - Use MusicBrainz API for accurate track listings
-- `--acoustid-key` - AcoustID API key for fingerprinting (or set ACOUSTID_API_KEY env var)
+- `--use-musicbrainz` - Use MusicBrainz API for accurate track listings (reads stored AcoustID from metadata)
+- `--acoustid-key` - AcoustID API key for better MusicBrainz lookups (or set ACOUSTID_API_KEY env var)
 - `-f, --find` - Search for and copy missing tracks to auto-add folder
-- `-s, --search-dir` - Directory to search for replacement tracks
+- `-s, --search-dir` - Directory to search for replacement tracks (required with --find)
+- `--auto-add-dir` - Override auto-add directory (auto-detected from Library.xml by default)
 - `-l, --limit` - Limit number of albums to process
-- `-v, --verbose` - Enable verbose output
+- `-v, --verbose` - Enable detailed logging (shows missing tracks, found files, copy operations)
 
 **Examples:**
 ```bash
@@ -211,7 +214,7 @@ Analyzes your music library to find incomplete albums with missing tracks. Can o
 
 1. **Track Number Analysis** (default): Analyzes track numbers to find gaps (e.g., has tracks 1,2,4 but missing 3)
 2. **MusicBrainz Mode** (--use-musicbrainz): 
-   - Reads AcoustID fingerprints from your audio files
+   - Reads stored AcoustID fingerprints from your file metadata
    - Queries MusicBrainz for accurate album track listings
    - Compares your tracks against the official track list
    - Identifies missing tracks by title, not just number
@@ -221,10 +224,25 @@ Analyzes your music library to find incomplete albums with missing tracks. Can o
    - Copies found tracks to Apple Music's auto-add folder
 
 **Requirements for MusicBrainz mode:**
-- Install with: `pip install musicbrainzngs pyacoustid`
-- Optional: Get free AcoustID API key from https://acoustid.org/api-key
-- FFmpeg must be installed for fingerprinting
-- `--auto-add-dir PATH` - Override auto-add folder (rarely needed, auto-detected from XML)
+- Your audio files must have AcoustID fingerprints in their metadata (pre-processed)
+- Install with: `pip install musicbrainzngs`
+- Optional but recommended: Get free AcoustID API key from https://acoustid.org/api-key
+
+**Verbose Mode (`-v, --verbose`):**
+When enabled, provides detailed logging including:
+- Each album being analyzed with track counts
+- Specific missing track names or numbers
+- Files found during search with scores
+- Copy operations showing source and destination
+- File sizes of copied tracks
+- Summary statistics (total missing, cached lookups, files copied)
+
+**Auto-Add Directory:**
+The command automatically detects your Apple Music "Automatically Add to Music" folder from Library.xml.
+If it can't find it, you can specify it with `--auto-add-dir PATH`.
+Common locations:
+- `~/Music/Music/Media.localized/Automatically Add to Music.localized`
+- `~/Music/iTunes/iTunes Media/Automatically Add to iTunes.localized`
 
 ## Library Management
 
