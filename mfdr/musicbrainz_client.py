@@ -24,6 +24,7 @@ try:
     import musicbrainzngs
     HAS_MUSICBRAINZ = True
 except ImportError:
+    musicbrainzngs = None  # Make it available as None for mocking
     HAS_MUSICBRAINZ = False
     logger.warning("musicbrainzngs not installed. Install with: pip install musicbrainzngs")
 
@@ -31,6 +32,7 @@ try:
     import acoustid
     HAS_ACOUSTID = True
 except ImportError:
+    acoustid = None  # Make it available as None for mocking
     HAS_ACOUSTID = False
     logger.warning("pyacoustid not installed. Install with: pip install pyacoustid")
 
@@ -38,6 +40,7 @@ try:
     import chromaprint
     HAS_CHROMAPRINT = True
 except ImportError:
+    chromaprint = None  # Make it available as None for mocking
     HAS_CHROMAPRINT = False
     # This is OK, acoustid can work without chromaprint if we already have fingerprints
 
@@ -63,10 +66,13 @@ class MusicBrainzClient:
     CACHE_DIR = Path.home() / ".cache" / "mfdr" / "musicbrainz"
     CACHE_EXPIRY_DAYS = 30
     RATE_LIMIT_DELAY = 1.1  # MusicBrainz requires 1 req/sec for anonymous
+    AUTHENTICATED_RATE_LIMIT = 0.0  # No rate limit for authenticated users
     
     def __init__(self, acoustid_api_key: Optional[str] = None, 
                  user_agent: str = "MFDR/1.0 (https://github.com/yourusername/mfdr)",
-                 cache_enabled: bool = True):
+                 cache_enabled: bool = True,
+                 mb_username: Optional[str] = None,
+                 mb_password: Optional[str] = None):
         """
         Initialize MusicBrainz client
         
@@ -74,10 +80,21 @@ class MusicBrainzClient:
             acoustid_api_key: API key for AcoustID (get from https://acoustid.org/api-key)
             user_agent: User agent string for MusicBrainz (required)
             cache_enabled: Whether to cache API responses
+            mb_username: MusicBrainz username for authenticated requests (no rate limit)
+            mb_password: MusicBrainz password for authenticated requests
         """
         self.acoustid_api_key = acoustid_api_key
         self.cache_enabled = cache_enabled
         self.last_request_time = 0
+        self.authenticated = False
+        
+        # Set rate limit based on authentication
+        if mb_username and mb_password:
+            self.rate_limit_delay = self.AUTHENTICATED_RATE_LIMIT
+            self.authenticated = True
+            logger.info("Using MusicBrainz authentication - no rate limiting!")
+        else:
+            self.rate_limit_delay = self.RATE_LIMIT_DELAY
         
         if HAS_MUSICBRAINZ:
             musicbrainzngs.set_useragent(
@@ -85,6 +102,11 @@ class MusicBrainzClient:
                 user_agent.split('/')[1].split()[0] if '/' in user_agent else "1.0",  # Version
                 user_agent.split('(')[1].rstrip(')') if '(' in user_agent else "contact@example.com"
             )
+            
+            # Set authentication if provided
+            if mb_username and mb_password:
+                musicbrainzngs.auth(mb_username, mb_password)
+                logger.debug(f"Authenticated as {mb_username}")
         
         # Setup cache directory
         if cache_enabled:
@@ -92,11 +114,12 @@ class MusicBrainzClient:
     
     def _rate_limit(self):
         """Enforce rate limiting for MusicBrainz API"""
-        current_time = time.time()
-        time_since_last = current_time - self.last_request_time
-        if time_since_last < self.RATE_LIMIT_DELAY:
-            time.sleep(self.RATE_LIMIT_DELAY - time_since_last)
-        self.last_request_time = time.time()
+        if self.rate_limit_delay > 0:
+            current_time = time.time()
+            time_since_last = current_time - self.last_request_time
+            if time_since_last < self.rate_limit_delay:
+                time.sleep(self.rate_limit_delay - time_since_last)
+            self.last_request_time = time.time()
     
     def _get_cache_path(self, cache_key: str) -> Path:
         """Get cache file path for a given key"""

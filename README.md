@@ -183,6 +183,8 @@ Analyzes your music library to find incomplete albums with missing tracks. Can o
 - `-i, --interactive` - Interactive mode - review albums one by one
 - `--use-musicbrainz` - Use MusicBrainz API for accurate track listings (reads stored AcoustID from metadata)
 - `--acoustid-key` - AcoustID API key for better MusicBrainz lookups (or set ACOUSTID_API_KEY env var)
+- `--mb-user` - MusicBrainz username for authenticated requests (or set MUSICBRAINZ_USER env var)
+- `--mb-pass` - MusicBrainz password for authenticated requests (or set MUSICBRAINZ_PASS env var)
 - `-f, --find` - Search for and copy missing tracks to auto-add folder
 - `-s, --search-dir` - Directory to search for replacement tracks (required with --find)
 - `--auto-add-dir` - Override auto-add directory (auto-detected from Library.xml by default)
@@ -201,6 +203,11 @@ Analyzes your music library to find incomplete albums with missing tracks. Can o
 ./venv/bin/python -m mfdr knit Library.xml --use-musicbrainz
 
 # Find and copy missing tracks using MusicBrainz
+./venv/bin/python -m mfdr knit Library.xml --use-musicbrainz --find -s /Volumes/Backup
+
+# Use MusicBrainz with authentication for no rate limiting
+export MUSICBRAINZ_USER="your_username"
+export MUSICBRAINZ_PASS="your_password"
 ./venv/bin/python -m mfdr knit Library.xml --use-musicbrainz --find -s /Volumes/Backup
 
 # Generate markdown report
@@ -225,8 +232,9 @@ Analyzes your music library to find incomplete albums with missing tracks. Can o
 
 **Requirements for MusicBrainz mode:**
 - Your audio files must have AcoustID fingerprints in their metadata (pre-processed)
-- Install with: `pip install musicbrainzngs`
+- Install with: `pip install musicbrainzngs pyacoustid`
 - Optional but recommended: Get free AcoustID API key from https://acoustid.org/api-key
+- Optional: MusicBrainz account for faster lookups (no rate limiting with authentication)
 
 **Verbose Mode (`-v, --verbose`):**
 When enabled, provides detailed logging including:

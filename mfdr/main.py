@@ -1439,6 +1439,10 @@ def sync(xml_path: Path, library_root: Optional[Path],
               help='Use MusicBrainz API to get accurate album track listings')
 @click.option('--acoustid-key', type=str, envvar='ACOUSTID_API_KEY',
               help='AcoustID API key for fingerprinting (or set ACOUSTID_API_KEY env var)')
+@click.option('--mb-user', type=str, envvar='MUSICBRAINZ_USER',
+              help='MusicBrainz username for faster lookups (or set MUSICBRAINZ_USER env var)')
+@click.option('--mb-pass', type=str, envvar='MUSICBRAINZ_PASS',
+              help='MusicBrainz password (or set MUSICBRAINZ_PASS env var)')
 @click.option('--find', '-f', is_flag=True,
               help='Search for and copy missing tracks to auto-add folder')
 @click.option('--search-dir', '-s', type=click.Path(exists=True, path_type=Path),
@@ -1448,6 +1452,7 @@ def sync(xml_path: Path, library_root: Optional[Path],
 def knit(xml_path: Path, threshold: float, min_tracks: int, output: Optional[Path],
          dry_run: bool, interactive: bool, checkpoint: bool, limit: Optional[int],
          verbose: bool, use_musicbrainz: bool, acoustid_key: Optional[str],
+         mb_user: Optional[str], mb_pass: Optional[str],
          find: bool, search_dir: Optional[Path], auto_add_dir: Optional[Path]) -> None:
     """Analyze album completeness in your music library
     
@@ -1492,8 +1497,16 @@ def knit(xml_path: Path, threshold: float, min_tracks: int, output: Optional[Pat
     # Initialize MusicBrainz client if needed
     mb_client = None
     if use_musicbrainz:
-        mb_client = MusicBrainzClient(acoustid_api_key=acoustid_key)
+        mb_client = MusicBrainzClient(
+            acoustid_api_key=acoustid_key,
+            mb_username=mb_user,
+            mb_password=mb_pass
+        )
         console.print("[info]🎵 Using MusicBrainz for accurate track listings[/info]")
+        if mb_user:
+            console.print("[success]⚡ Authenticated with MusicBrainz - no rate limiting![/success]")
+        else:
+            console.print("[info]   Rate limited to 1 request/second (use --mb-user for faster lookups)[/info]")
         console.print()
     
     # Parse Library.xml

@@ -39,6 +39,7 @@ class TestMusicBrainzClient:
         assert client.acoustid_api_key is None
         assert client.cache_enabled is True
     
+    @patch('mfdr.musicbrainz_client.HAS_MUSICBRAINZ', True)
     @patch('mfdr.musicbrainz_client.musicbrainzngs')
     def test_search_album(self, mock_mb, client):
         """Test album search"""
@@ -59,6 +60,7 @@ class TestMusicBrainzClient:
         assert results[0]['id'] == 'release-123'
         mock_mb.search_releases.assert_called_once()
     
+    @patch('mfdr.musicbrainz_client.HAS_MUSICBRAINZ', True)
     @patch('mfdr.musicbrainz_client.musicbrainzngs')
     def test_get_release_info(self, mock_mb, client):
         """Test getting detailed release information"""
@@ -104,6 +106,7 @@ class TestMusicBrainzClient:
         assert len(album_info.track_list) == 2
         assert album_info.track_list[0]['title'] == 'Track 1'
     
+    @patch('mfdr.musicbrainz_client.HAS_ACOUSTID', True)
     @patch('mfdr.musicbrainz_client.acoustid')
     def test_lookup_by_fingerprint(self, mock_acoustid, client):
         """Test AcoustID fingerprint lookup"""
@@ -131,6 +134,7 @@ class TestMusicBrainzClient:
             'test_key', 'test_fingerprint', 180, meta='recordings releases'
         )
     
+    @patch('mfdr.musicbrainz_client.HAS_ACOUSTID', True)
     @patch('mfdr.musicbrainz_client.acoustid')
     def test_get_fingerprint(self, mock_acoustid, client):
         """Test fingerprint generation"""
@@ -157,6 +161,7 @@ class TestMusicBrainzClient:
         cache_files = list(client_with_cache.CACHE_DIR.glob('*.json'))
         assert len(cache_files) == 1
     
+    @patch('mfdr.musicbrainz_client.HAS_MUSICBRAINZ', True)
     @patch('mfdr.musicbrainz_client.musicbrainzngs')
     def test_find_best_album_match(self, mock_mb, client):
         """Test finding best album match"""
@@ -219,6 +224,8 @@ class TestMusicBrainzClient:
         elapsed = time.time() - start_time
         assert elapsed >= client.RATE_LIMIT_DELAY
     
+    @patch('mfdr.musicbrainz_client.HAS_MUSICBRAINZ', True)
+    @patch('mfdr.musicbrainz_client.HAS_ACOUSTID', True)
     @patch('mfdr.musicbrainz_client.musicbrainzngs')
     @patch('mfdr.musicbrainz_client.acoustid')
     def test_get_album_info_from_track_with_fingerprint(self, mock_acoustid, mock_mb, client, tmp_path):
@@ -261,7 +268,7 @@ class TestMusicBrainzClient:
         
         assert result is not None
         assert result.title == 'Test Album'
-        assert result.source == 'acoustid'
+        assert result.source == 'acoustid-generated'
     
     def test_clear_cache(self, client_with_cache):
         """Test cache clearing"""
