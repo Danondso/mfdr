@@ -38,6 +38,13 @@ def fetch_mb_info_for_album(album_data, mb_client, verbose=False):
         # Fetch MusicBrainz info
         if verbose:
             logger.debug(f"🔍 Looking up: {artist} - {album_name}")
+        
+        # Check if this will be a cache hit
+        is_cached = mb_client.has_cached_album(artist, album_name, 
+                                              album_tracks[0].year if album_tracks and hasattr(album_tracks[0], 'year') else None)
+        
+        if verbose and is_cached:
+            logger.debug(f"📦 Using cached data for: {artist} - {album_name}")
             
         mb_info = mb_client.get_album_info_from_track(
             track_with_file.file_path,
@@ -50,7 +57,8 @@ def fetch_mb_info_for_album(album_data, mb_client, verbose=False):
         
         if verbose and mb_info:
             track_count = len(mb_info.track_list) if hasattr(mb_info, 'track_list') else 'unknown'
-            logger.debug(f"✅ Found {track_count} tracks for: {artist} - {album_name}")
+            source = "cache" if is_cached else "API"
+            logger.debug(f"✅ Found {track_count} tracks for: {artist} - {album_name} (from {source})")
         
         return album_key, mb_info
         

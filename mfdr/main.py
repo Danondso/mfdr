@@ -1575,7 +1575,7 @@ def knit(xml_path: Path, threshold: float, min_tracks: int, output: Optional[Pat
                 with open(cache_file) as f:
                     existing_cache = json.load(f)
                     mb_cache.update(existing_cache)
-                    console.print(f"[info]Loaded {len(existing_cache)} cached MusicBrainz entries[/info]")
+                    console.print(f"[info]Loaded {len(existing_cache)} entries from previous knit runs[/info]")
                     if verbose:
                         logger.info(f"📂 Cache loaded from: {cache_file}")
                         # Show sample of cache keys for debugging
@@ -1613,99 +1613,149 @@ def knit(xml_path: Path, threshold: float, min_tracks: int, output: Optional[Pat
             if verbose:
                 logger.info(f"🎯 100% cache hit rate - no new lookups needed")
         else:
-            console.print(f"[cyan]Fetching MusicBrainz data for {len(albums_needing_lookup)} new albums...[/cyan]")
-            console.print(f"[info]({len(mb_cache)} already cached)[/info]")
+            # Check how many are in MusicBrainzClient cache vs truly new
+            mb_client_cached = 0
+            for album_data in albums_needing_lookup:
+                album_key = album_data[0]
+                if ' - ' in album_key:
+                    artist, album_name = album_key.rsplit(' - ', 1)
+                else:
+                    artist = album_key
+                    album_name = album_key
+                year = album_data[1][0].year if album_data[1] and hasattr(album_data[1][0], 'year') else None
+                if mb_client.has_cached_album(artist, album_name, year):
+                    mb_client_cached += 1
             
-            # Estimate time for new lookups only
-            per_album_time = 0.8 if mb_client.authenticated else 1.5  # More realistic estimates
-            estimated_minutes = (len(albums_needing_lookup) * per_album_time) / 60
-            console.print(f"[info]Estimated time: {estimated_minutes:.1f} minutes. Press Ctrl+C to skip.[/info]")
+            truly_new = len(albums_needing_lookup) - mb_client_cached
+            
+            console.print(f"[cyan]Processing {len(albums_needing_lookup)} albums:[/cyan]")
+            if mb_client_cached > 0:
+                console.print(f"[info]  • {mb_client_cached} from MusicBrainz cache (fast)[/info]")
+            if truly_new > 0:
+                console.print(f"[info]  • {truly_new} new lookups needed[/info]")
+                # Estimate time for new lookups only
+                per_album_time = 0.8 if mb_client.authenticated else 1.5
+                estimated_minutes = (truly_new * per_album_time) / 60
+                console.print(f"[info]Estimated time: {estimated_minutes:.1f} minutes for new lookups. Press Ctrl+C to skip.[/info]")
+            
             if verbose:
-                logger.info(f"🔍 Will lookup {len(albums_needing_lookup)} new albums, using {'authenticated' if mb_client.authenticated else 'anonymous'} access")
+                logger.info(f"🔍 Processing {len(albums_needing_lookup)} albums ({mb_client_cached} cached, {truly_new} new)")
         
         if verbose:
             logger.info(f"🎵 Starting MusicBrainz lookups for {len(albums_to_process)} albums")
             logger.info(f"🔐 Authenticated: {mb_client.authenticated}")
-            logger.info(f"📊 Cache contains {len(mb_cache)} existing entries")
+            logger.info(f"📊 Knit cache already contains {len(mb_cache)} entries from previous runs")
         
         # Import at function level to avoid circular imports
         from rich.progress import track
         from .knit_optimizer import fetch_mb_info_for_album
-        from concurrent.futures import ThreadPoolExecutor, TimeoutError as FutureTimeoutError
         
         # Process with progress display
         failed_count = 0
         success_count = 0
         if albums_needing_lookup:
-            try:
-                # Process in smaller batches to avoid memory issues
-                batch_size = 50  # Process 50 albums at a time
-                for batch_start in range(0, len(albums_needing_lookup), batch_size):
-                    batch_end = min(batch_start + batch_size, len(albums_needing_lookup))
-                    batch = albums_needing_lookup[batch_start:batch_end]
+            # First, quickly process any that are already cached in MusicBrainzClient
+            cached_albums = []
+            uncached_albums = []
+            
+            for album_data in albums_needing_lookup:
+                album_key = album_data[0]
+                # Parse artist and album for cache check
+                if ' - ' in album_key:
+                    artist, album_name = album_key.rsplit(' - ', 1)
+                else:
+                    artist = album_key
+                    album_name = album_key
+                
+                year = album_data[1][0].year if album_data[1] and hasattr(album_data[1][0], 'year') else None
+                
+                if mb_client.has_cached_album(artist, album_name, year):
+                    cached_albums.append(album_data)
+                else:
+                    uncached_albums.append(album_data)
+            
+            # Process cached albums in batch for maximum efficiency
+            if cached_albums:
+                console.print(f"[cyan]Loading {len(cached_albums)} albums from MusicBrainz cache...[/cyan]")
+                
+                # Prepare batch request
+                batch_requests = []
+                request_to_key = {}  # Map request back to album key
+                
+                for album_data in cached_albums:
+                    album_key = album_data[0]
+                    album_tracks = album_data[1]
                     
-                    if verbose:
-                        logger.info(f"Processing batch {batch_start//batch_size + 1} ({batch_start+1}-{batch_end} of {len(albums_needing_lookup)})")
+                    # Parse artist and album
+                    if ' - ' in album_key:
+                        artist, album_name = album_key.rsplit(' - ', 1)
+                    else:
+                        artist = album_key
+                        album_name = album_key
                     
-                    for album_data in track(batch, description=f"[cyan]Batch {batch_start//batch_size + 1}..."):
-                        album_key = album_data[0]
+                    year = album_tracks[0].year if album_tracks and hasattr(album_tracks[0], 'year') else None
+                    
+                    batch_requests.append((artist, album_name, year))
+                    request_to_key[(artist, album_name, year)] = album_key
+                
+                # Batch load all cached albums at once
+                batch_results = mb_client.batch_load_cached_albums(batch_requests)
+                
+                # Update mb_cache with results
+                for result_key, album_info in batch_results.items():
+                    mb_cache[result_key] = album_info
+                    success_count += 1
+                
+                console.print(f"[success]✓ Loaded {success_count} albums from MusicBrainz cache[/success]")
+                if verbose:
+                    logger.info(f"📊 Total cache entries now: {len(mb_cache)}")
+            
+            # Now process uncached albums with progress bar and rate limiting
+            if uncached_albums:
+                console.print(f"[cyan]Fetching MusicBrainz data for {len(uncached_albums)} albums...[/cyan]")
+                
+                try:
+                    # Process in batches for better progress tracking
+                    batch_size = 100  # Process 100 albums at a time
+                    for batch_start in range(0, len(uncached_albums), batch_size):
+                        batch_end = min(batch_start + batch_size, len(uncached_albums))
+                        batch = uncached_albums[batch_start:batch_end]
                         
-                        # Simple direct call with basic timeout handling
-                        try:
-                            import signal
+                        if verbose:
+                            logger.info(f"Processing batch {batch_start//batch_size + 1} ({batch_start+1}-{batch_end} of {len(uncached_albums)})")
+                        
+                        for album_data in track(batch, description=f"[cyan]Batch {batch_start//batch_size + 1}..."):
+                            album_key = album_data[0]
                             
-                            # Define timeout handler
-                            def timeout_handler(signum, frame):
-                                raise TimeoutError("Album lookup timed out")
-                            
-                            # Set alarm for timeout (Unix only, but more efficient)
-                            if hasattr(signal, 'SIGALRM'):
-                                old_handler = signal.signal(signal.SIGALRM, timeout_handler)
-                                signal.alarm(15)  # 15 second timeout
-                                try:
-                                    _, mb_info = fetch_mb_info_for_album(album_data, mb_client, verbose)
-                                finally:
-                                    signal.alarm(0)  # Cancel alarm
-                                    signal.signal(signal.SIGALRM, old_handler)
-                            else:
-                                # Fallback for Windows - just do the call without timeout
+                            try:
+                                # Direct call without timeout handling - let the API handle its own timeouts
                                 _, mb_info = fetch_mb_info_for_album(album_data, mb_client, verbose)
+                                
+                                if mb_info:
+                                    mb_cache[album_key] = mb_info
+                                    success_count += 1
+                                    if verbose and success_count % 10 == 0:
+                                        logger.info(f"✓ Processed {success_count} albums successfully")
+                                else:
+                                    if verbose and failed_count < 5:  # Only log first few failures
+                                        logger.debug(f"✗ No MusicBrainz info found for: {album_key[:60]}")
+                                        
+                            except Exception as e:
+                                failed_count += 1
+                                if verbose and failed_count <= 5:
+                                    logger.warning(f"✗ Failed: {album_key[:50]}: {str(e)[:50]}")
+                                if failed_count > 20:  # Increased threshold
+                                    console.print("[warning]Too many failures, skipping remaining lookups[/warning]")
+                                    break
                             
-                            if mb_info:
-                                mb_cache[album_key] = mb_info
-                                success_count += 1
-                                if verbose and success_count % 10 == 0:
-                                    logger.info(f"✓ Processed {success_count} albums successfully")
-                            else:
-                                if verbose and failed_count < 5:  # Only log first few failures
-                                    logger.debug(f"✗ No MusicBrainz info found for: {album_key[:60]}")
-                                    
-                        except (TimeoutError, Exception) as e:
-                            failed_count += 1
-                            if verbose and failed_count <= 5:
-                                logger.warning(f"✗ Failed: {album_key[:50]}: {str(e)[:50]}")
-                            if failed_count > 20:  # Increased threshold
-                                console.print("[warning]Too many failures, skipping remaining lookups[/warning]")
-                                break
-                        
-                        # Rate limiting
-                        if not mb_client.authenticated:
-                            time.sleep(1.0)  # 1 second between requests for anonymous
-                        else:
-                            time.sleep(0.05)  # Smaller delay for authenticated
-                    
-                    # Clear any accumulated memory between batches
-                    import gc
-                    gc.collect()
-                        
-            except KeyboardInterrupt:
-                console.print("\n[warning]MusicBrainz lookup interrupted by user[/warning]")
-                if verbose:
-                    logger.info(f"⚠️ Interrupted after {success_count} successful lookups and {failed_count} failures")
-            except Exception as e:
-                console.print(f"[error]MusicBrainz lookup error: {str(e)[:100]}[/error]")
-                if verbose:
-                    logger.error(f"💥 Lookup process failed: {e}")
+                except KeyboardInterrupt:
+                    console.print("\n[warning]MusicBrainz lookup interrupted by user[/warning]")
+                    if verbose:
+                        logger.info(f"⚠️ Interrupted after {success_count} successful lookups and {failed_count} failures")
+                except Exception as e:
+                    console.print(f"[error]MusicBrainz lookup error: {str(e)[:100]}[/error]")
+                    if verbose:
+                        logger.error(f"💥 Lookup process failed: {e}")
         
         # Always save cache after processing (including both new and existing entries)
         # This fixes the issue where cache wasn't growing between runs
@@ -1732,14 +1782,19 @@ def knit(xml_path: Path, threshold: float, min_tracks: int, output: Optional[Pat
                 if verbose:
                     logger.error(f"Cache save failed: {e}")
         
-        console.print(f"[success]✓ Cached {len(mb_cache)} MusicBrainz album entries[/success]")
+        console.print(f"[success]✓ Total: {len(mb_cache)} MusicBrainz album entries ready[/success]")
         if verbose:
-            new_count = success_count if 'success_count' in locals() else 0
+            initial_cache_size = cache_hits  # Albums that were already in knit cache
+            new_from_mb_cache = success_count if 'success_count' in locals() else 0
             fail_count = failed_count if 'failed_count' in locals() else 0
-            hit_rate = ((len(mb_cache) - new_count) * 100) / len(albums_to_process) if albums_to_process else 0
-            logger.info(f"📊 MusicBrainz stats: {new_count} new lookups, {len(mb_cache)-new_count} cache hits ({hit_rate:.1f}% hit rate)")
+            
+            logger.info(f"📊 Cache statistics:")
+            logger.info(f"  • Started with {initial_cache_size} entries from previous knit runs")
+            logger.info(f"  • Loaded {new_from_mb_cache} from MusicBrainz cache")
+            logger.info(f"  • Total entries: {len(mb_cache)}")
+            
             if fail_count > 0:
-                logger.info(f"❌ Failed lookups: {fail_count} (timeouts + errors)")
+                logger.info(f"❌ Failed lookups: {fail_count}")
     
     # Analyze album completeness
     incomplete_albums = []
