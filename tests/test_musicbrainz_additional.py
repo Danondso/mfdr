@@ -16,7 +16,11 @@ class TestMusicBrainzAdditional:
     @pytest.fixture
     def mb_client(self):
         """Create a MusicBrainzClient instance"""
-        with patch('mfdr.musicbrainz_client.musicbrainzngs'):
+        with patch('mfdr.musicbrainz_client.musicbrainzngs') as mock_mb:
+            mock_mb.search_releases = Mock()
+            mock_mb.get_release_by_id = Mock()
+            mock_mb.set_useragent = Mock()
+            mock_mb.auth = Mock()
             client = MusicBrainzClient()
             return client
     
@@ -33,10 +37,11 @@ class TestMusicBrainzAdditional:
             assert client.acoustid_api_key is None
             assert client.authenticated is False
     
-    def test_search_album_success(self, mb_client):
+    def test_search_album_success(self):
         """Test successful album search"""
-        with patch('mfdr.musicbrainz_client.musicbrainzngs.search_releases') as mock_search:
-            mock_search.return_value = {
+        with patch('mfdr.musicbrainz_client.musicbrainzngs') as mock_mb:
+            mock_mb.set_useragent = Mock()
+            mock_mb.search_releases = Mock(return_value={
                 'release-list': [
                     {
                         'id': 'release-1',
@@ -46,32 +51,38 @@ class TestMusicBrainzAdditional:
                         'track-count': 10
                     }
                 ]
-            }
+            })
             
-            results = mb_client.search_album('Test Artist', 'Test Album')
+            client = MusicBrainzClient()
+            results = client.search_album('Test Artist', 'Test Album')
             assert results is not None
             assert len(results) >= 1
     
-    def test_search_album_no_results(self, mb_client):
+    def test_search_album_no_results(self):
         """Test album search with no results"""
-        with patch('mfdr.musicbrainz_client.musicbrainzngs.search_releases') as mock_search:
-            mock_search.return_value = {'release-list': []}
+        with patch('mfdr.musicbrainz_client.musicbrainzngs') as mock_mb:
+            mock_mb.set_useragent = Mock()
+            mock_mb.search_releases = Mock(return_value={'release-list': []})
             
-            results = mb_client.search_album('Unknown Artist', 'Unknown Album')
+            client = MusicBrainzClient()
+            results = client.search_album('Unknown Artist', 'Unknown Album')
             assert results == []
     
-    def test_search_album_exception(self, mb_client):
+    def test_search_album_exception(self):
         """Test album search with exception"""
-        with patch('mfdr.musicbrainz_client.musicbrainzngs.search_releases') as mock_search:
-            mock_search.side_effect = Exception("API Error")
+        with patch('mfdr.musicbrainz_client.musicbrainzngs') as mock_mb:
+            mock_mb.set_useragent = Mock()
+            mock_mb.search_releases = Mock(side_effect=Exception("API Error"))
             
-            results = mb_client.search_album('Artist', 'Album')
+            client = MusicBrainzClient()
+            results = client.search_album('Artist', 'Album')
             assert results is None
     
-    def test_get_release_info_success(self, mb_client):
+    def test_get_release_info_success(self):
         """Test getting release info"""
-        with patch('mfdr.musicbrainz_client.musicbrainzngs.get_release_by_id') as mock_get:
-            mock_get.return_value = {
+        with patch('mfdr.musicbrainz_client.musicbrainzngs') as mock_mb:
+            mock_mb.set_useragent = Mock()
+            mock_mb.get_release_by_id = Mock(return_value={
                 'release': {
                     'id': 'release-1',
                     'title': 'Test Album',
@@ -86,20 +97,23 @@ class TestMusicBrainzAdditional:
                         }
                     ]
                 }
-            }
+            })
             
-            info = mb_client.get_release_info('release-1')
+            client = MusicBrainzClient()
+            info = client.get_release_info('release-1')
             assert info is not None
             assert info.title == 'Test Album'
             assert info.artist == 'Test Artist'
             assert len(info.track_list) == 2
     
-    def test_get_release_info_exception(self, mb_client):
+    def test_get_release_info_exception(self):
         """Test getting release info with exception"""
-        with patch('mfdr.musicbrainz_client.musicbrainzngs.get_release_by_id') as mock_get:
-            mock_get.side_effect = Exception("Not found")
+        with patch('mfdr.musicbrainz_client.musicbrainzngs') as mock_mb:
+            mock_mb.set_useragent = Mock()
+            mock_mb.get_release_by_id = Mock(side_effect=Exception("Not found"))
             
-            info = mb_client.get_release_info('invalid-id')
+            client = MusicBrainzClient()
+            info = client.get_release_info('invalid-id')
             assert info is None
     
     def test_get_stored_fingerprint(self, mb_client, tmp_path):
@@ -186,17 +200,19 @@ class TestMusicBrainzAdditional:
             # acoustid not installed, skip this test
             pytest.skip("acoustid not installed")
     
-    def test_search_album_with_year(self, mb_client):
+    def test_search_album_with_year(self):
         """Test album search with year filter"""
-        with patch('mfdr.musicbrainz_client.musicbrainzngs.search_releases') as mock_search:
-            mock_search.return_value = {
+        with patch('mfdr.musicbrainz_client.musicbrainzngs') as mock_mb:
+            mock_mb.set_useragent = Mock()
+            mock_mb.search_releases = Mock(return_value={
                 'release-list': [
                     {'title': 'Album 2020', 'date': '2020', 'id': 'rel-1'},
                     {'title': 'Album 2019', 'date': '2019', 'id': 'rel-2'}
                 ]
-            }
+            })
             
-            results = mb_client.search_album('Artist', 'Album', year=2020)
+            client = MusicBrainzClient()
+            results = client.search_album('Artist', 'Album', year=2020)
             assert results is not None
     
     def test_get_album_info_from_track(self, mb_client, tmp_path):

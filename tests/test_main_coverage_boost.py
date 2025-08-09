@@ -282,14 +282,16 @@ class TestMainCoverageBoost:
         """Test export with default output path"""
         runner = CliRunner()
         
-        with patch('mfdr.apple_music.export_library_xml') as mock_export:
-            mock_export.return_value = (True, None)
-            
-            result = runner.invoke(cli, ['export'])
-            assert result.exit_code == 0
-            # Should use default "Library.xml"
-            mock_export.assert_called_once()
-            assert mock_export.call_args[0][0].name == "Library.xml"
+        with patch('mfdr.apple_music.is_music_app_available') as mock_available:
+            mock_available.return_value = True
+            with patch('mfdr.apple_music.export_library_xml') as mock_export:
+                mock_export.return_value = (True, None)
+                
+                result = runner.invoke(cli, ['export'])
+                assert result.exit_code == 0
+                # Should use default "Library.xml"
+                mock_export.assert_called_once()
+                assert mock_export.call_args[0][0].name == "Library.xml"
     
     def test_export_file_exists_without_overwrite(self, tmp_path):
         """Test export when file exists without overwrite flag"""
@@ -297,9 +299,12 @@ class TestMainCoverageBoost:
         output_file = tmp_path / "Library.xml"
         output_file.write_text("existing")
         
-        result = runner.invoke(cli, ['export', str(output_file)])
-        # Should warn about existing file
-        assert "exists" in result.output.lower() or "overwrite" in result.output.lower()
+        with patch('mfdr.apple_music.is_music_app_available') as mock_available:
+            mock_available.return_value = True
+            
+            result = runner.invoke(cli, ['export', str(output_file)])
+            # Should warn about existing file
+            assert "exists" in result.output.lower() or "overwrite" in result.output.lower()
     
     # Test knit with various album configurations
     def test_knit_with_multi_disc_album(self, tmp_path):

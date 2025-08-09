@@ -21,11 +21,11 @@ class TestMainComprehensive:
         runner = CliRunner()
         output_file = tmp_path / "Library.xml"
         
-        # Patch where they are imported from
-        with patch('mfdr.apple_music.export_library_xml') as mock_export:
-            mock_export.return_value = (True, None)
-            with patch('mfdr.apple_music.is_music_app_available') as mock_available:
-                mock_available.return_value = True
+        # Patch both functions where they are imported from
+        with patch('mfdr.apple_music.is_music_app_available') as mock_available:
+            mock_available.return_value = True
+            with patch('mfdr.apple_music.export_library_xml') as mock_export:
+                mock_export.return_value = (True, None)
                 
                 result = runner.invoke(cli, ['export', str(output_file)])
                 assert result.exit_code == 0
@@ -37,10 +37,10 @@ class TestMainComprehensive:
         output_file = tmp_path / "Library.xml"
         output_file.write_text("existing content")
         
-        with patch('mfdr.apple_music.export_library_xml') as mock_export:
-            mock_export.return_value = (True, None)
-            with patch('mfdr.apple_music.is_music_app_available') as mock_available:
-                mock_available.return_value = True
+        with patch('mfdr.apple_music.is_music_app_available') as mock_available:
+            mock_available.return_value = True
+            with patch('mfdr.apple_music.export_library_xml') as mock_export:
+                mock_export.return_value = (True, None)
                 
                 result = runner.invoke(cli, ['export', str(output_file), '--overwrite'])
                 assert result.exit_code == 0
@@ -52,10 +52,10 @@ class TestMainComprehensive:
         runner = CliRunner()
         output_file = tmp_path / "Library.xml"
         
-        with patch('mfdr.apple_music.export_library_xml') as mock_export:
-            mock_export.return_value = (False, "Export failed")
-            with patch('mfdr.apple_music.is_music_app_available') as mock_available:
-                mock_available.return_value = True
+        with patch('mfdr.apple_music.is_music_app_available') as mock_available:
+            mock_available.return_value = True
+            with patch('mfdr.apple_music.export_library_xml') as mock_export:
+                mock_export.return_value = (False, "Export failed")
                 
                 result = runner.invoke(cli, ['export', str(output_file)])
                 # Export failure might still exit with 0 but show error message
@@ -66,10 +66,10 @@ class TestMainComprehensive:
         runner = CliRunner()
         output_file = tmp_path / "Library.xml"
         
-        with patch('mfdr.apple_music.export_library_xml') as mock_export:
-            mock_export.return_value = (True, None)
-            with patch('mfdr.apple_music.is_music_app_available') as mock_available:
-                mock_available.return_value = True
+        with patch('mfdr.apple_music.is_music_app_available') as mock_available:
+            mock_available.return_value = True
+            with patch('mfdr.apple_music.export_library_xml') as mock_export:
+                mock_export.return_value = (True, None)
                 with patch('subprocess.run') as mock_run:
                     result = runner.invoke(cli, ['export', str(output_file), '--open-after'])
                     assert result.exit_code == 0
