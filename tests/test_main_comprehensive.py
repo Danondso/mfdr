@@ -21,12 +21,15 @@ class TestMainComprehensive:
         runner = CliRunner()
         output_file = tmp_path / "Library.xml"
         
+        # Patch where they are imported from
         with patch('mfdr.apple_music.export_library_xml') as mock_export:
             mock_export.return_value = (True, None)
-            
-            result = runner.invoke(cli, ['export', str(output_file)])
-            assert result.exit_code == 0
-            mock_export.assert_called_once()
+            with patch('mfdr.apple_music.is_music_app_available') as mock_available:
+                mock_available.return_value = True
+                
+                result = runner.invoke(cli, ['export', str(output_file)])
+                assert result.exit_code == 0
+                mock_export.assert_called_once()
     
     def test_export_command_with_overwrite(self, tmp_path):
         """Test export command with overwrite flag"""
@@ -36,11 +39,13 @@ class TestMainComprehensive:
         
         with patch('mfdr.apple_music.export_library_xml') as mock_export:
             mock_export.return_value = (True, None)
-            
-            result = runner.invoke(cli, ['export', str(output_file), '--overwrite'])
-            assert result.exit_code == 0
-            # Check it was called with the overwrite flag
-            assert mock_export.call_args[0][1] == True  # Second arg is overwrite
+            with patch('mfdr.apple_music.is_music_app_available') as mock_available:
+                mock_available.return_value = True
+                
+                result = runner.invoke(cli, ['export', str(output_file), '--overwrite'])
+                assert result.exit_code == 0
+                # Check it was called with the overwrite flag
+                assert mock_export.call_args[0][1] == True  # Second arg is overwrite
     
     def test_export_command_failure(self, tmp_path):
         """Test export command when export fails"""
@@ -49,10 +54,12 @@ class TestMainComprehensive:
         
         with patch('mfdr.apple_music.export_library_xml') as mock_export:
             mock_export.return_value = (False, "Export failed")
-            
-            result = runner.invoke(cli, ['export', str(output_file)])
-            # Export failure might still exit with 0 but show error message
-            assert "failed" in result.output.lower() or "error" in result.output.lower()
+            with patch('mfdr.apple_music.is_music_app_available') as mock_available:
+                mock_available.return_value = True
+                
+                result = runner.invoke(cli, ['export', str(output_file)])
+                # Export failure might still exit with 0 but show error message
+                assert "failed" in result.output.lower() or "error" in result.output.lower()
     
     def test_export_with_open_after(self, tmp_path):
         """Test export command with open-after flag"""
@@ -61,11 +68,13 @@ class TestMainComprehensive:
         
         with patch('mfdr.apple_music.export_library_xml') as mock_export:
             mock_export.return_value = (True, None)
-            with patch('subprocess.run') as mock_run:
-                result = runner.invoke(cli, ['export', str(output_file), '--open-after'])
-                assert result.exit_code == 0
-                # Should attempt to open Finder
-                mock_run.assert_called()
+            with patch('mfdr.apple_music.is_music_app_available') as mock_available:
+                mock_available.return_value = True
+                with patch('subprocess.run') as mock_run:
+                    result = runner.invoke(cli, ['export', str(output_file), '--open-after'])
+                    assert result.exit_code == 0
+                    # Should attempt to open Finder
+                    mock_run.assert_called()
     
     # Test sync command error paths
     def test_sync_without_auto_add_dir(self, tmp_path):
