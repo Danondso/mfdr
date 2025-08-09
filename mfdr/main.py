@@ -1638,44 +1638,65 @@ def knit(xml_path: Path, threshold: float, min_tracks: int, output: Optional[Pat
         success_count = 0
         if albums_needing_lookup:
             try:
-                for album_data in track(albums_needing_lookup, description="[cyan]Fetching album data..."):
-                    album_key = album_data[0]
+                # Process in smaller batches to avoid memory issues
+                batch_size = 50  # Process 50 albums at a time
+                for batch_start in range(0, len(albums_needing_lookup), batch_size):
+                    batch_end = min(batch_start + batch_size, len(albums_needing_lookup))
+                    batch = albums_needing_lookup[batch_start:batch_end]
                     
-                    # Use thread-based timeout for better cross-platform compatibility
-                    try:
-                        with ThreadPoolExecutor(max_workers=1) as executor:
-                            future = executor.submit(fetch_mb_info_for_album, album_data, mb_client, verbose)
-                            _, mb_info = future.result(timeout=15)  # 15 second timeout per album
+                    if verbose:
+                        logger.info(f"Processing batch {batch_start//batch_size + 1} ({batch_start+1}-{batch_end} of {len(albums_needing_lookup)})")
+                    
+                    for album_data in track(batch, description=f"[cyan]Batch {batch_start//batch_size + 1}..."):
+                        album_key = album_data[0]
+                        
+                        # Simple direct call with basic timeout handling
+                        try:
+                            import signal
                             
-                        if mb_info:
-                            mb_cache[album_key] = mb_info
-                            success_count += 1
-                            if verbose:
-                                logger.info(f"✓ Got MusicBrainz info for: {album_key[:60]}")
+                            # Define timeout handler
+                            def timeout_handler(signum, frame):
+                                raise TimeoutError("Album lookup timed out")
+                            
+                            # Set alarm for timeout (Unix only, but more efficient)
+                            if hasattr(signal, 'SIGALRM'):
+                                old_handler = signal.signal(signal.SIGALRM, timeout_handler)
+                                signal.alarm(15)  # 15 second timeout
+                                try:
+                                    _, mb_info = fetch_mb_info_for_album(album_data, mb_client, verbose)
+                                finally:
+                                    signal.alarm(0)  # Cancel alarm
+                                    signal.signal(signal.SIGALRM, old_handler)
+                            else:
+                                # Fallback for Windows - just do the call without timeout
+                                _, mb_info = fetch_mb_info_for_album(album_data, mb_client, verbose)
+                            
+                            if mb_info:
+                                mb_cache[album_key] = mb_info
+                                success_count += 1
+                                if verbose and success_count % 10 == 0:
+                                    logger.info(f"✓ Processed {success_count} albums successfully")
+                            else:
+                                if verbose and failed_count < 5:  # Only log first few failures
+                                    logger.debug(f"✗ No MusicBrainz info found for: {album_key[:60]}")
+                                    
+                        except (TimeoutError, Exception) as e:
+                            failed_count += 1
+                            if verbose and failed_count <= 5:
+                                logger.warning(f"✗ Failed: {album_key[:50]}: {str(e)[:50]}")
+                            if failed_count > 20:  # Increased threshold
+                                console.print("[warning]Too many failures, skipping remaining lookups[/warning]")
+                                break
+                        
+                        # Rate limiting
+                        if not mb_client.authenticated:
+                            time.sleep(1.0)  # 1 second between requests for anonymous
                         else:
-                            if verbose:
-                                logger.debug(f"✗ No MusicBrainz info found for: {album_key[:60]}")
-                                
-                    except FutureTimeoutError:
-                        failed_count += 1
-                        if verbose:
-                            logger.warning(f"⏱️ Timeout for: {album_key[:50]}")
-                        if failed_count > 10:
-                            console.print("[warning]Too many timeouts, skipping remaining lookups[/warning]")
-                            break
-                    except Exception as e:
-                        failed_count += 1
-                        if verbose:
-                            logger.warning(f"✗ Failed: {album_key[:50]}: {str(e)[:50]}")
-                        if failed_count > 10:
-                            console.print("[warning]Too many failures, skipping remaining lookups[/warning]")
-                            break
+                            time.sleep(0.05)  # Smaller delay for authenticated
                     
-                    # Rate limiting - more conservative
-                    if not mb_client.authenticated:
-                        time.sleep(1.0)  # 1 second between requests for anonymous
-                    else:
-                        time.sleep(0.1)  # Small delay even for authenticated
+                    # Clear any accumulated memory between batches
+                    import gc
+                    gc.collect()
                         
             except KeyboardInterrupt:
                 console.print("\n[warning]MusicBrainz lookup interrupted by user[/warning]")
@@ -1907,6 +1928,8 @@ def knit(xml_path: Path, threshold: float, min_tracks: int, output: Optional[Pat
                 if isinstance(track_info, str):
                     # Search by title
                     candidates = file_search.find_by_name(track_info, artist=album.get('artist'))
+                    if verbose:
+                        logger.info(f"  Searching for '{track_info}' by {album.get('artist', 'Unknown')} - found {len(candidates)} candidates")
                     if candidates:
                         # Quick scoring
                         for candidate_path in candidates[:5]:  # Check only top 5
@@ -1923,6 +1946,30 @@ def knit(xml_path: Path, threshold: float, min_tracks: int, output: Optional[Pat
                                     'file_path': candidate_path,
                                     'score': score
                                 })
+                                break
+                else:
+                    # Search by track number
+                    track_num = track_info
+                    search_terms = [f"{track_num:02d}", f"{track_num}", f"track {track_num}"]
+                    
+                    for search_term in search_terms:
+                        candidates = file_search.find_by_name(search_term, artist=album.get('artist'))
+                        if verbose:
+                            logger.info(f"  Searching for track #{track_num} with term '{search_term}' - found {len(candidates)} candidates")
+                        if candidates:
+                            # Filter by album/artist in path
+                            for candidate_path in candidates[:10]:
+                                path_str = str(candidate_path).lower()
+                                album_name = album.get('album', '').lower()
+                                artist_name = album.get('artist', '').lower()
+                                if album_name in path_str or artist_name in path_str:
+                                    album_replacements.append({
+                                        'track_number': track_num,
+                                        'file_path': candidate_path,
+                                        'score': 75
+                                    })
+                                    break
+                            if album_replacements:
                                 break
             
             if album_replacements:

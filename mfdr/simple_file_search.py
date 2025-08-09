@@ -36,24 +36,32 @@ class SimpleFileSearch:
                 logger.warning(f"Search directory does not exist: {search_dir}")
                 continue
                 
-            # Find all audio files
-            for ext in self.AUDIO_EXTENSIONS:
-                for file_path in search_dir.rglob(f"*{ext}"):
-                    total_files += 1
+            # Find ALL files in one pass, then filter by extension
+            # This is MUCH faster than multiple rglob calls
+            for file_path in search_dir.rglob("*"):
+                # Skip directories and non-audio files
+                if file_path.is_dir() or file_path.suffix.lower() not in self.AUDIO_EXTENSIONS:
+                    continue
                     
-                    # Index by normalized name
-                    normalized = self.normalize_for_search(file_path.stem)
-                    if normalized:
-                        if normalized not in self.name_index:
-                            self.name_index[normalized] = []
-                        self.name_index[normalized].append(file_path)
+                total_files += 1
+                
+                # Index by normalized name
+                normalized = self.normalize_for_search(file_path.stem)
+                if normalized:
+                    if normalized not in self.name_index:
+                        self.name_index[normalized] = []
+                    self.name_index[normalized].append(file_path)
+                
+                # Also index by original name (case-insensitive)
+                lower_name = file_path.stem.lower()
+                if lower_name != normalized and lower_name:
+                    if lower_name not in self.name_index:
+                        self.name_index[lower_name] = []
+                    self.name_index[lower_name].append(file_path)
                     
-                    # Also index by original name (case-insensitive)
-                    lower_name = file_path.stem.lower()
-                    if lower_name != normalized and lower_name:
-                        if lower_name not in self.name_index:
-                            self.name_index[lower_name] = []
-                        self.name_index[lower_name].append(file_path)
+                # Log progress every 1000 files to show it's working
+                if total_files % 1000 == 0:
+                    logger.info(f"  Indexed {total_files} files so far...")
         
         logger.info(f"Indexed {total_files} audio files")
     
@@ -115,11 +123,16 @@ class SimpleFileSearch:
                 results.extend(self.name_index[normalized_base])
                 logger.debug(f"Found {len(results)} matches without parenthetical for '{track_name}'")
         
-        # 3. Check if track name is contained in any indexed name
-        if not results:
+        # 3. Check if track name is contained in any indexed name (LIMIT SEARCH)
+        if not results and len(normalized_name) > 3:  # Only for meaningful search terms
+            # Limit to first 100 partial matches to avoid performance issues
+            partial_matches = 0
             for indexed_name, paths in self.name_index.items():
+                if partial_matches >= 100:  # Stop after finding enough matches
+                    break
                 if normalized_name in indexed_name or indexed_name in normalized_name:
                     results.extend(paths)
+                    partial_matches += len(paths)
             
             if results:
                 logger.debug(f"Found {len(results)} partial matches for '{track_name}'")
@@ -133,11 +146,15 @@ class SimpleFileSearch:
                 if combo in self.name_index:
                     results.extend(self.name_index[combo])
             
-            # Also try partial matches with artist
+            # Also try partial matches with artist (LIMIT SEARCH)
             if not results:
+                partial_matches = 0
                 for indexed_name, paths in self.name_index.items():
+                    if partial_matches >= 50:  # Limit artist+name searches more strictly
+                        break
                     if (normalized_artist in indexed_name and normalized_name in indexed_name):
                         results.extend(paths)
+                        partial_matches += len(paths)
         
         # Remove duplicates while preserving order
         seen = set()
@@ -161,6 +178,7 @@ class SimpleFileSearch:
     def find_by_size(self, size: int, tolerance: float = 0.01) -> List[Path]:
         """
         Find files by size (with small tolerance)
+        NOTE: This is slow as it needs to stat every file. Use sparingly.
         
         Args:
             size: File size in bytes
@@ -176,18 +194,32 @@ class SimpleFileSearch:
         max_size = int(size * (1 + tolerance))
         
         results = []
-        for search_dir in self.search_dirs:
-            if not search_dir.exists():
-                continue
+        checked = 0
+        
+        # Check files from our index instead of doing rglob again
+        seen_paths = set()
+        for paths_list in self.name_index.values():
+            for file_path in paths_list:
+                if file_path in seen_paths:
+                    continue
+                seen_paths.add(file_path)
                 
-            for ext in self.AUDIO_EXTENSIONS:
-                for file_path in search_dir.rglob(f"*{ext}"):
-                    try:
-                        file_size = file_path.stat().st_size
-                        if min_size <= file_size <= max_size:
-                            results.append(file_path)
-                    except OSError:
-                        pass
+                try:
+                    file_size = file_path.stat().st_size
+                    if min_size <= file_size <= max_size:
+                        results.append(file_path)
+                    
+                    checked += 1
+                    if checked % 1000 == 0:
+                        logger.debug(f"Checked {checked} files for size match...")
+                        
+                    # Limit results to avoid excessive processing
+                    if len(results) >= 100:
+                        logger.debug(f"Found 100 size matches, stopping search")
+                        return results
+                        
+                except OSError:
+                    pass
         
         return results
     
