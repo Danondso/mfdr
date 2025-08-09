@@ -1,6 +1,6 @@
 [project]
 name = "mfdr"
-version = "0.2.0"
+version = "0.3.0"
 description = "Python CLI app for doctoring your music library"
 authors = [{name = "Danondso", email = "7014871+Danondso@users.noreply.github.com"}]
 license = {text = "MIT"}
@@ -14,6 +14,8 @@ dependencies = [
     "tqdm>=4.64.0",
     "click>=8.0.0",
     "rich>=13.0.0",
+    "musicbrainzngs>=0.7.1",
+    "pyacoustid>=1.2.2",
 ]
 
 [project.optional-dependencies]

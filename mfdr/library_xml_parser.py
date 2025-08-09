@@ -18,6 +18,7 @@ class LibraryTrack:
     name: str
     artist: str
     album: str
+    persistent_id: Optional[str] = None  # Required for deleting tracks from Apple Music
     location: Optional[str] = None  # File URL from XML
     size: Optional[int] = None
     total_time: Optional[int] = None  # Duration in milliseconds
@@ -176,6 +177,7 @@ class LibraryXMLParser:
                 name=track_data.get('Name', 'Unknown'),
                 artist=track_data.get('Artist', 'Unknown Artist'),
                 album=track_data.get('Album', 'Unknown Album'),
+                persistent_id=track_data.get('Persistent ID'),
                 location=track_data.get('Location'),
                 size=track_data.get('Size'),
                 total_time=track_data.get('Total Time'),
