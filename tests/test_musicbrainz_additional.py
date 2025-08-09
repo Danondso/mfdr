@@ -16,13 +16,14 @@ class TestMusicBrainzAdditional:
     @pytest.fixture
     def mb_client(self):
         """Create a MusicBrainzClient instance"""
-        with patch('mfdr.musicbrainz_client.musicbrainzngs') as mock_mb:
-            mock_mb.search_releases = Mock()
-            mock_mb.get_release_by_id = Mock()
-            mock_mb.set_useragent = Mock()
-            mock_mb.auth = Mock()
-            client = MusicBrainzClient()
-            return client
+        with patch('mfdr.musicbrainz_client.HAS_MUSICBRAINZ', True):
+            with patch('mfdr.musicbrainz_client.musicbrainzngs') as mock_mb:
+                mock_mb.search_releases = Mock()
+                mock_mb.get_release_by_id = Mock()
+                mock_mb.set_useragent = Mock()
+                mock_mb.auth = Mock()
+                client = MusicBrainzClient()
+                return client
     
     def test_init_with_acoustid_key(self):
         """Test initialization with AcoustID API key"""
