@@ -12,7 +12,7 @@ from mfdr.services.track_matcher import TrackMatcher
 from mfdr.utils.library_xml_parser import LibraryTrack
 
 
-class TestMatching:
+class TestScoring:
     """Tests for track matching and scoring functionality"""
     
     # ============= TRACK MATCHER INITIALIZATION =============

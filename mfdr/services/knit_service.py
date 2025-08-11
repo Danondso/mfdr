@@ -218,11 +218,10 @@ class KnitService:
         try:
             self.mb_client = MusicBrainzClient(
                 acoustid_api_key=acoustid_key,
-                user_agent="mfdr/1.0"
+                user_agent="mfdr/1.0",
+                mb_username=mb_user,
+                mb_password=mb_pass
             )
-            
-            if mb_user and mb_pass:
-                self.mb_client.authenticate(mb_user, mb_pass)
             
             self.console.print("[success]✅ MusicBrainz client initialized[/success]")
         except Exception as e:

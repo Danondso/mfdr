@@ -17,8 +17,8 @@ from mfdr.ui.candidate_selector import CandidateSelector
 from mfdr.utils.library_xml_parser import LibraryTrack
 
 
-class TestUI:
-    """Tests for UI, display, and interactive functionality"""
+class TestCLI:
+    """Tests for CLI, display, and interactive functionality"""
     
     # ============= INTERACTIVE MODE TESTS =============
     
