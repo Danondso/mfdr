@@ -31,10 +31,14 @@ class SimpleFileSearch:
         logger.info(f"Indexing files in {len(self.search_dirs)} directories...")
         
         total_files = 0
+        sample_files = []  # Keep track of some sample files for debugging
+        
         for search_dir in self.search_dirs:
             if not search_dir.exists():
                 logger.warning(f"Search directory does not exist: {search_dir}")
                 continue
+            
+            logger.info(f"  Scanning directory: {search_dir}")
                 
             # Find ALL files in one pass, then filter by extension
             # This is MUCH faster than multiple rglob calls
@@ -44,6 +48,10 @@ class SimpleFileSearch:
                     continue
                     
                 total_files += 1
+                
+                # Keep first 10 files as samples for debugging
+                if len(sample_files) < 10:
+                    sample_files.append(file_path)
                 
                 # Index by normalized name
                 normalized = self.normalize_for_search(file_path.stem)
@@ -64,6 +72,13 @@ class SimpleFileSearch:
                     logger.info(f"  Indexed {total_files} files so far...")
         
         logger.info(f"Indexed {total_files} audio files")
+        logger.info(f"Created {len(self.name_index)} unique index entries")
+        
+        # Log sample files for debugging
+        if sample_files:
+            logger.info("Sample indexed files:")
+            for f in sample_files[:5]:
+                logger.info(f"  - {f.name} -> normalized: '{self.normalize_for_search(f.stem)}'")
     
     def normalize_for_search(self, text: str) -> str:
         """
@@ -85,7 +100,9 @@ class SimpleFileSearch:
         text = text.lower()
         
         # Remove punctuation but keep spaces
-        text = re.sub(r'[^\w\s]', ' ', text)
+        # Also normalize hyphens, underscores to spaces for better matching
+        text = re.sub(r'[-_]', ' ', text)  # Convert hyphens and underscores to spaces first
+        text = re.sub(r'[^\w\s]', ' ', text)  # Then remove other punctuation
         
         # Normalize whitespace
         text = ' '.join(text.split())
@@ -110,21 +127,29 @@ class SimpleFileSearch:
         normalized_name = self.normalize_for_search(track_name)
         normalized_artist = self.normalize_for_search(artist) if artist else None
         
+        # Log search parameters
+        logger.info(f"Searching for track: '{track_name}' (normalized: '{normalized_name}')")
+        if artist:
+            logger.info(f"  Artist: '{artist}' (normalized: '{normalized_artist}')")
+        logger.info(f"  Total indexed names: {len(self.name_index)}")
+        
         # 1. Direct name match (most likely)
         if normalized_name in self.name_index:
             results.extend(self.name_index[normalized_name])
-            logger.debug(f"Found {len(results)} exact matches for '{track_name}'")
+            logger.info(f"Found {len(results)} exact matches for '{track_name}'")
         
         # 2. Try without parenthetical additions (e.g., "Song (Remix)" -> "Song")
         if '(' in track_name and not results:
             base_name = track_name.split('(')[0].strip()
             normalized_base = self.normalize_for_search(base_name)
+            logger.info(f"  Trying without parenthetical: '{base_name}' -> '{normalized_base}'")
             if normalized_base in self.name_index:
                 results.extend(self.name_index[normalized_base])
-                logger.debug(f"Found {len(results)} matches without parenthetical for '{track_name}'")
+                logger.info(f"Found {len(results)} matches without parenthetical for '{track_name}'")
         
         # 3. Check if track name is contained in any indexed name (LIMIT SEARCH)
         if not results and len(normalized_name) > 3:  # Only for meaningful search terms
+            logger.info(f"  Trying partial matches for '{normalized_name}'")
             # Limit to first 100 partial matches to avoid performance issues
             partial_matches = 0
             for indexed_name, paths in self.name_index.items():
@@ -133,9 +158,24 @@ class SimpleFileSearch:
                 if normalized_name in indexed_name or indexed_name in normalized_name:
                     results.extend(paths)
                     partial_matches += len(paths)
+                    logger.info(f"    Partial match found: '{indexed_name}' ({len(paths)} files)")
+            
+            # If still no results and name has multiple words, try matching all words (order-independent)
+            if not results:
+                name_words = normalized_name.split()
+                if len(name_words) >= 2:
+                    logger.info(f"  Trying word-based match for words: {name_words}")
+                    for indexed_name, paths in self.name_index.items():
+                        if partial_matches >= 100:
+                            break
+                        # Check if all words are present in the indexed name
+                        if all(word in indexed_name for word in name_words):
+                            results.extend(paths)
+                            partial_matches += len(paths)
+                            logger.info(f"    Word match found: '{indexed_name}' ({len(paths)} files)")
             
             if results:
-                logger.debug(f"Found {len(results)} partial matches for '{track_name}'")
+                logger.info(f"Found {len(results)} partial matches for '{track_name}'")
         
         # 4. Try with artist + track name combo
         if not results and normalized_artist:

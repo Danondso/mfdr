@@ -712,18 +712,88 @@ class MusicBrainzClient:
             # Load from cache
             cached_data = self._load_from_cache(cache_key)
             if cached_data and isinstance(cached_data, list) and len(cached_data) > 0:
-                # Create AlbumInfo from cached search results
-                first_release = cached_data[0]
+                # Select the best release from the results
+                # Prefer: Album > EP > Single, and prefer releases with more tracks
+                best_release = None
+                best_score = -1
+                
+                for release in cached_data[:10]:  # Check first 10 results
+                    score = 0
+                    
+                    # Score by release type
+                    release_group = release.get('release-group', {})
+                    primary_type = release_group.get('primary-type', '').lower()
+                    if primary_type == 'album':
+                        score += 100
+                    elif primary_type == 'ep':
+                        score += 50
+                    elif primary_type == 'single':
+                        score += 10
+                    
+                    # Score by track count (from media)
+                    media_list = release.get('medium-list', [])
+                    if media_list:
+                        total_tracks = sum(m.get('track-count', 0) for m in media_list)
+                        score += min(total_tracks, 30)  # Cap at 30 to avoid huge compilations
+                    
+                    # Prefer official releases
+                    if release.get('status') == 'Official':
+                        score += 20
+                    
+                    if score > best_score:
+                        best_score = score
+                        best_release = release
+                
+                # Use the best release found
+                first_release = best_release if best_release else cached_data[0]
+                
+                # Get track count from media list if not in track-count field
+                track_count = first_release.get('track-count', 0)
+                if track_count == 0:
+                    # Try to get from media list
+                    media_list = first_release.get('medium-list', [])
+                    if media_list:
+                        track_count = sum(m.get('track-count', 0) for m in media_list)
+                
+                # If we have a valid track count from search, use it
+                # Otherwise, we'll need to fetch full release info (but that's slow)
+                # For now, just mark it as unknown (0) and let the main code handle it
+                
+                # Store the release ID so we can fetch track list later if needed
+                # We'll only fetch the full track list when actually displaying missing tracks
+                # to avoid unnecessary API calls
+                track_list = []
+                
+                # But if we already have the release cached, use it
+                release_id = first_release.get('id', '')
+                if release_id:
+                    release_cache_key = f"release_{release_id}"
+                    if release_cache_key in self._cache_index and not self._cache_index[release_cache_key]['expired']:
+                        # We have cached release data, extract track list
+                        release_data = self._load_from_cache(release_cache_key)
+                        if release_data and 'media' in release_data:
+                            for medium in release_data['media']:
+                                for track in medium.get('tracks', []):
+                                    track_list.append({
+                                        'title': track.get('title', ''),
+                                        'position': track.get('position', 0),
+                                        'length': track.get('length'),
+                                        'number': track.get('number', '')
+                                    })
+                            # Update track count from actual track list if it was 0
+                            if track_count == 0 and track_list:
+                                track_count = len(track_list)
+                
                 album_info = AlbumInfo(
                     artist=artist,
                     title=first_release.get('title', album),
                     release_id=first_release.get('id', ''),
-                    total_tracks=first_release.get('track-count', 0),
-                    track_list=[],  # Not needed for knit command
+                    total_tracks=track_count,  # May be 0 if not in search results
+                    track_list=track_list,  # Now includes actual track titles when available
                     release_date=first_release.get('date'),
                     release_group_id=first_release.get('release-group', {}).get('id') if isinstance(first_release.get('release-group'), dict) else None,
                     disc_count=first_release.get('medium-count', 1),
-                    confidence=0.9,
+                    confidence=0.9 if track_count > 0 else 0.5,  # Lower confidence if no track count
                     source='cache-batch'
                 )
                 

@@ -45,7 +45,7 @@ class TestSyncCommand:
         xml_file = tmp_path / "Library.xml"
         xml_file.write_text("<plist></plist>")
         
-        with patch('mfdr.main.LibraryXMLParser') as mock_parser:
+        with patch('mfdr.commands.sync_command.LibraryXMLParser') as mock_parser:
             mock_instance = Mock()
             mock_parser.return_value = mock_instance
             mock_instance.parse.return_value = mock_tracks
@@ -87,7 +87,7 @@ class TestSyncCommand:
         xml_file = tmp_path / "Library.xml"
         xml_file.write_text("<plist></plist>")
         
-        with patch('mfdr.main.LibraryXMLParser') as mock_parser:
+        with patch('mfdr.commands.sync_command.LibraryXMLParser') as mock_parser:
             mock_instance = Mock()
             mock_parser.return_value = mock_instance
             mock_instance.parse.return_value = mock_tracks * 5  # 10 tracks
@@ -114,7 +114,7 @@ class TestSyncCommand:
             )
         ]
         
-        with patch('mfdr.main.LibraryXMLParser') as mock_parser:
+        with patch('mfdr.commands.sync_command.LibraryXMLParser') as mock_parser:
             mock_instance = Mock()
             mock_parser.return_value = mock_instance
             mock_instance.parse.return_value = external_tracks
@@ -131,7 +131,7 @@ class TestSyncCommand:
         xml_file = tmp_path / "Library.xml"
         xml_file.write_text("<plist></plist>")
         
-        with patch('mfdr.main.LibraryXMLParser') as mock_parser:
+        with patch('mfdr.commands.sync_command.LibraryXMLParser') as mock_parser:
             mock_instance = Mock()
             mock_parser.return_value = mock_instance
             mock_instance.parse.return_value = mock_tracks
@@ -151,7 +151,7 @@ class TestSyncCommand:
         library_root = tmp_path / "MusicLibrary"
         library_root.mkdir()
         
-        with patch('mfdr.main.LibraryXMLParser') as mock_parser:
+        with patch('mfdr.commands.sync_command.LibraryXMLParser') as mock_parser:
             mock_instance = Mock()
             mock_parser.return_value = mock_instance
             mock_instance.parse.return_value = mock_tracks
@@ -169,7 +169,7 @@ class TestSyncCommand:
         auto_add = tmp_path / "AutoAdd"
         auto_add.mkdir()
         
-        with patch('mfdr.main.LibraryXMLParser') as mock_parser:
+        with patch('mfdr.commands.sync_command.LibraryXMLParser') as mock_parser:
             mock_instance = Mock()
             mock_parser.return_value = mock_instance
             mock_instance.parse.return_value = mock_tracks
@@ -185,7 +185,7 @@ class TestSyncCommand:
         xml_file = tmp_path / "Library.xml"
         xml_file.write_text("<plist></plist>")
         
-        with patch('mfdr.main.LibraryXMLParser') as mock_parser:
+        with patch('mfdr.commands.sync_command.LibraryXMLParser') as mock_parser:
             mock_instance = Mock()
             mock_parser.return_value = mock_instance
             mock_instance.parse.return_value = []
@@ -213,7 +213,7 @@ class TestSyncCommand:
             track.album = f"Album {i}"
             mock_tracks.append(track)
         
-        with patch('mfdr.main.LibraryXMLParser') as mock_parser:
+        with patch('mfdr.commands.sync_command.LibraryXMLParser') as mock_parser:
             mock_instance = Mock()
             mock_parser.return_value = mock_instance
             mock_instance.parse.return_value = mock_tracks

@@ -11,6 +11,23 @@ import time
 logger = logging.getLogger(__name__)
 
 
+def track_numbers_to_expected(track_numbers: List[int]) -> int:
+    """
+    Determine expected track count from a list of track numbers.
+    
+    Args:
+        track_numbers: List of track numbers from an album
+        
+    Returns:
+        Expected total number of tracks in the album
+    """
+    if not track_numbers:
+        return 0
+    
+    # The expected count is the maximum track number
+    return max(track_numbers)
+
+
 def fetch_mb_info_for_album(album_data, mb_client, verbose=False):
     """
     Fetch MusicBrainz info for a single album.
@@ -204,6 +221,26 @@ def search_for_single_track(album, track_info, file_search, score_candidate_func
             
             # Search for this track
             candidates = file_search.find_by_name(track_title, artist=album.get('artist'))
+            
+            # If no candidates found and track has a hyphen, try without it
+            # (e.g., "Soldier Side - Intro" -> "Soldier Side Intro")
+            if not candidates and '-' in track_title:
+                alt_title = track_title.replace('-', ' ').strip()
+                alt_title = ' '.join(alt_title.split())  # Normalize spaces
+                candidates = file_search.find_by_name(alt_title, artist=album.get('artist'))
+                if verbose and candidates:
+                    logger.debug(f"Found candidates using alternate search: '{alt_title}'")
+            
+            # If still no candidates and track name contains "Intro", "Outro", or "Interlude",
+            # try searching with just the artist name
+            if not candidates and any(word in track_title.lower() for word in ['intro', 'outro', 'interlude']):
+                # Search for files with artist name and the keyword
+                for keyword in ['intro', 'outro', 'interlude']:
+                    if keyword in track_title.lower():
+                        candidates = file_search.find_by_name(keyword, artist=album.get('artist'))
+                        if candidates:
+                            break
+            
             if not candidates:
                 return None
             
@@ -223,12 +260,18 @@ def search_for_single_track(album, track_info, file_search, score_candidate_func
             
             if scored_candidates:
                 best_path, best_score = max(scored_candidates, key=lambda x: x[1])
-                if best_score >= 70:
+                # Lower threshold for better matching - especially for short track names like "Intro"
+                # Use 50 for tracks with artist match, 60 without
+                threshold = 50 if album.get('artist') else 60
+                if best_score >= threshold:
                     return {
                         'track_title': track_title,
                         'file_path': best_path,
                         'score': best_score
                     }
+                elif best_score >= 40 and verbose:
+                    # Log near-misses for debugging
+                    logger.debug(f"Near miss for '{track_title}': {best_path.name} (score: {best_score})")
         
         else:  # Track number search
             track_num = track_info
@@ -300,7 +343,7 @@ def parallel_track_search(
             try:
                 with ThreadPoolExecutor(max_workers=min(max_workers, len(tracks_to_search))) as executor:
                     futures = [
-                        executor.submit(search_for_single_track, album, track, file_search, score_candidate_func) 
+                        executor.submit(search_for_single_track, album, track, file_search, score_candidate_func, verbose) 
                         for track in tracks_to_search
                     ]
                     
@@ -316,7 +359,7 @@ def parallel_track_search(
                 logger.debug(f"Parallel track search failed: {e}")
                 # Fall back to sequential
                 for track in tracks_to_search:
-                    result = search_for_single_track(album, track, file_search, score_candidate_func)
+                    result = search_for_single_track(album, track, file_search, score_candidate_func, verbose)
                     if result:
                         album_replacements.append(result)
         else:
