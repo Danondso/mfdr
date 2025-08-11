@@ -11,7 +11,7 @@ from rich.progress import Progress, SpinnerColumn, TextColumn, BarColumn, MofNCo
 from rich.table import Table
 from rich import box
 
-from ..library_xml_parser import LibraryXMLParser
+from ..utils.library_xml_parser import LibraryXMLParser
 from ..ui.progress_manager import ProgressManager
 
 console = Console()

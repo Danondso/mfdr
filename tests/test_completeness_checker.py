@@ -3,8 +3,8 @@ import pytest
 from pathlib import Path
 from unittest.mock import Mock, MagicMock, patch
 import subprocess
-from mfdr.completeness_checker import CompletenessChecker
-from mfdr.library_xml_parser import LibraryTrack
+from mfdr.services.completeness_checker import CompletenessChecker
+from mfdr.utils.library_xml_parser import LibraryTrack
 
 
 class TestCompletenessCheckerCore:

@@ -11,10 +11,10 @@ from rich.panel import Panel
 from rich.table import Table
 from rich import box
 
-from ..library_xml_parser import LibraryXMLParser, LibraryTrack
-from ..knit_optimizer import track_numbers_to_expected
+from ..utils.library_xml_parser import LibraryXMLParser, LibraryTrack
+from .knit_optimizer import track_numbers_to_expected
 from ..musicbrainz_client import MusicBrainzClient
-from ..simple_file_search import SimpleFileSearch
+from .simple_file_search import SimpleFileSearch
 from ..ui.progress_manager import ProgressManager
 from ..ui.table_utils import create_summary_table
 from .checkpoint_manager import CheckpointManager

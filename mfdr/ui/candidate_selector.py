@@ -8,8 +8,8 @@ from rich.panel import Panel
 from rich import box
 import click
 
-from ..library_xml_parser import LibraryTrack
-from ..file_manager import FileCandidate
+from ..utils.library_xml_parser import LibraryTrack
+from ..utils.file_manager import FileCandidate
 from ..utils.file_utils import format_size
 
 

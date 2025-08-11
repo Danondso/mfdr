@@ -9,7 +9,7 @@ from datetime import datetime
 from rich.console import Console
 from rich.panel import Panel
 
-from ..completeness_checker import CompletenessChecker
+from .completeness_checker import CompletenessChecker
 from ..ui.progress_manager import ProgressManager
 from ..ui.table_utils import create_summary_table
 from ..utils.constants import AUDIO_EXTENSIONS, CHECKPOINT_SAVE_INTERVAL

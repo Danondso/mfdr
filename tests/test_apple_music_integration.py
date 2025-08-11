@@ -14,7 +14,7 @@ from mfdr.apple_music import (
     check_track_exists, delete_tracks_by_id, 
     is_music_app_available, export_library_xml
 )
-from mfdr.library_xml_parser import LibraryTrack
+from mfdr.utils.library_xml_parser import LibraryTrack
 
 
 class TestAppleMusicIntegration:

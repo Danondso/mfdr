@@ -5,7 +5,7 @@ Tests for SimpleFileSearch class
 import pytest
 from pathlib import Path
 from unittest.mock import Mock, patch, MagicMock, call
-from mfdr.simple_file_search import SimpleFileSearch
+from mfdr.services.simple_file_search import SimpleFileSearch
 
 
 class TestSimpleFileSearch:

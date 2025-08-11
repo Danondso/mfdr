@@ -6,10 +6,10 @@ from typing import List, Dict, Any, Optional, Tuple
 from dataclasses import dataclass
 from collections import defaultdict
 
-from ..library_xml_parser import LibraryTrack
-from ..file_manager import FileManager, FileCandidate
-from ..track_matcher import TrackMatcher
-from ..completeness_checker import CompletenessChecker
+from ..utils.library_xml_parser import LibraryTrack
+from ..utils.file_manager import FileManager, FileCandidate
+from .track_matcher import TrackMatcher
+from .completeness_checker import CompletenessChecker
 from ..utils.constants import DEFAULT_AUTO_ACCEPT_THRESHOLD, MIN_AUDIO_FILE_SIZE_KB
 from ..utils.file_utils import validate_destination_path
 

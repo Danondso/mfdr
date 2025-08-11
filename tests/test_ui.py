@@ -14,7 +14,7 @@ import tempfile
 
 from mfdr.main import cli
 from mfdr.ui.candidate_selector import CandidateSelector
-from mfdr.library_xml_parser import LibraryTrack
+from mfdr.utils.library_xml_parser import LibraryTrack
 
 
 class TestUI:

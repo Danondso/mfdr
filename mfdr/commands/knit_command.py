@@ -114,7 +114,7 @@ def knit(xml_path: Path, threshold: float, min_tracks: int, output: Optional[Pat
         
         # Auto-detect auto-add directory if needed
         if not auto_add_dir:
-            from ..library_xml_parser import LibraryXMLParser
+            from ..utils.library_xml_parser import LibraryXMLParser
             parser = LibraryXMLParser(xml_path)
             parser.parse()  # Just to get music_folder
             

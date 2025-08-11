@@ -42,7 +42,7 @@ def create_status_panel(title: str, stats: dict, style: str = "cyan") -> Panel:
 def display_candidates_and_select(track, candidates, console, auto_accept_threshold=88.0):
     """Backward compatibility wrapper for tests."""
     from .ui.candidate_selector import CandidateSelector
-    from .file_manager import FileCandidate
+    from .utils.file_manager import FileCandidate
     
     selector = CandidateSelector(console)
     file_candidates = []

@@ -2,8 +2,8 @@ import pytest
 from pathlib import Path
 from unittest.mock import Mock, MagicMock, patch
 import json
-from mfdr.file_manager import FileManager, FileCandidate
-from mfdr.library_xml_parser import LibraryTrack
+from mfdr.utils.file_manager import FileManager, FileCandidate
+from mfdr.utils.library_xml_parser import LibraryTrack
 
 
 class TestFileCandidate:

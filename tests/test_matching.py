@@ -8,8 +8,8 @@ from unittest.mock import Mock, patch, MagicMock
 from pathlib import Path
 import tempfile
 
-from mfdr.track_matcher import TrackMatcher
-from mfdr.library_xml_parser import LibraryTrack
+from mfdr.services.track_matcher import TrackMatcher
+from mfdr.utils.library_xml_parser import LibraryTrack
 
 
 class TestMatching:

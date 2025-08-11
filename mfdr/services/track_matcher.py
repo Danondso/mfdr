@@ -8,8 +8,8 @@ from pathlib import Path
 from fuzzywuzzy import fuzz
 import re
 
-from .library_xml_parser import LibraryTrack
-from .file_manager import FileCandidate
+from ..utils.library_xml_parser import LibraryTrack
+from ..utils.file_manager import FileCandidate
 from .completeness_checker import CompletenessChecker
 
 logger = logging.getLogger(__name__)

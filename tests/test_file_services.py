@@ -10,7 +10,7 @@ from pathlib import Path
 import tempfile
 
 from mfdr.services.xml_scanner import SimpleFileSearch
-from mfdr.file_manager import FileManager
+from mfdr.utils.file_manager import FileManager
 from mfdr.services.directory_scanner import CompletenessChecker
 
 

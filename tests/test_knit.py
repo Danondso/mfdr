@@ -9,7 +9,7 @@ from click.testing import CliRunner
 import json
 
 from mfdr.main import cli
-from mfdr.library_xml_parser import LibraryTrack
+from mfdr.utils.library_xml_parser import LibraryTrack
 
 
 @pytest.fixture

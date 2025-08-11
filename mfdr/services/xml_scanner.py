@@ -10,11 +10,11 @@ from rich.panel import Panel
 from rich.table import Table
 from rich import box
 
-from ..library_xml_parser import LibraryXMLParser, LibraryTrack
-from ..file_manager import FileManager
-from ..track_matcher import TrackMatcher
-from ..completeness_checker import CompletenessChecker
-from ..simple_file_search import SimpleFileSearch
+from ..utils.library_xml_parser import LibraryXMLParser, LibraryTrack
+from ..utils.file_manager import FileManager
+from .track_matcher import TrackMatcher
+from .completeness_checker import CompletenessChecker
+from .simple_file_search import SimpleFileSearch
 from ..ui.progress_manager import ProgressManager
 from ..ui.candidate_selector import CandidateSelector
 from ..ui.table_utils import create_summary_table
