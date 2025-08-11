@@ -185,8 +185,7 @@ Analyzes your music library to find incomplete albums with missing tracks. Can o
 - `--acoustid-key` - AcoustID API key for better MusicBrainz lookups (or set ACOUSTID_API_KEY env var)
 - `--mb-user` - MusicBrainz username for authenticated requests (or set MUSICBRAINZ_USER env var)
 - `--mb-pass` - MusicBrainz password for authenticated requests (or set MUSICBRAINZ_PASS env var)
-- `-f, --find` - Search for and copy missing tracks to auto-add folder
-- `-s, --search-dir` - Directory to search for replacement tracks (required with --find)
+- `-s, --search-dir` - Directory to search for replacement tracks (enables finding and copying missing tracks)
 - `--auto-add-dir` - Override auto-add directory (auto-detected from Library.xml by default)
 - `-l, --limit` - Limit number of albums to process
 - `-v, --verbose` - Enable detailed logging (shows missing tracks, found files, copy operations)
@@ -203,12 +202,12 @@ Analyzes your music library to find incomplete albums with missing tracks. Can o
 ./venv/bin/python -m mfdr knit Library.xml --use-musicbrainz
 
 # Find and copy missing tracks using MusicBrainz
-./venv/bin/python -m mfdr knit Library.xml --use-musicbrainz --find -s /Volumes/Backup
+./venv/bin/python -m mfdr knit Library.xml --use-musicbrainz -s /Volumes/Backup
 
 # Use MusicBrainz with authentication for no rate limiting
 export MUSICBRAINZ_USER="your_username"
 export MUSICBRAINZ_PASS="your_password"
-./venv/bin/python -m mfdr knit Library.xml --use-musicbrainz --find -s /Volumes/Backup
+./venv/bin/python -m mfdr knit Library.xml --use-musicbrainz -s /Volumes/Backup
 
 # Generate markdown report
 ./venv/bin/python -m mfdr knit Library.xml --output missing-tracks.md
@@ -225,7 +224,7 @@ export MUSICBRAINZ_PASS="your_password"
    - Queries MusicBrainz for accurate album track listings
    - Compares your tracks against the official track list
    - Identifies missing tracks by title, not just number
-3. **Find Missing Tracks** (--find):
+3. **Find Missing Tracks** (--search-dir):
    - Searches specified directory for missing tracks
    - Batches replacements by album for efficiency
    - Copies found tracks to Apple Music's auto-add folder

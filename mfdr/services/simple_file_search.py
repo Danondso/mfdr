@@ -204,6 +204,42 @@ class SimpleFileSearch:
                 seen.add(path)
                 unique_results.append(path)
         
+        # IMPROVED: Filter results by artist match if artist is provided
+        # This prevents Led Zeppelin tracks from matching Bob Dylan searches
+        if normalized_artist and len(unique_results) > 0:
+            strong_matches = []
+            weak_matches = []
+            no_artist_matches = []
+            
+            for path in unique_results:
+                # Check full path for artist name
+                path_str = str(path).lower()
+                path_normalized = self.normalize_for_search(path_str)
+                
+                # Strong match: artist name in path or filename
+                if normalized_artist in path_normalized:
+                    strong_matches.append(path)
+                # Weak match: some overlap in artist words
+                elif any(word in path_normalized for word in normalized_artist.split() if len(word) > 3):
+                    weak_matches.append(path)
+                else:
+                    no_artist_matches.append(path)
+            
+            # Prioritize matches with correct artist
+            if strong_matches:
+                unique_results = strong_matches + weak_matches[:5]  # Add up to 5 weak matches
+                logger.info(f"Filtered to {len(strong_matches)} strong artist matches")
+            elif weak_matches:
+                unique_results = weak_matches[:10]  # Show more weak matches if no strong ones
+                logger.info(f"Using {len(unique_results)} weak artist matches")
+            # If no artist matches at all, only return results if track name was exact
+            elif self.normalize_for_search(unique_results[0].stem) == normalized_name:
+                unique_results = unique_results[:3]  # Only show top 3 if exact name match
+                logger.info("No artist match, but keeping exact track name matches")
+            else:
+                logger.info(f"Rejecting {len(unique_results)} results - no artist match for '{artist}'")
+                return []  # Reject all results if artist doesn't match and track name isn't exact
+        
         # Sort by relevance (exact matches first, then by path depth)
         def sort_key(path):
             name_match = self.normalize_for_search(path.stem) == normalized_name

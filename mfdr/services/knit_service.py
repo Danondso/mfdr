@@ -203,7 +203,7 @@ class KnitService:
                     found_tracks.append((track_info, candidates[0]))
                     
                     if auto_add_dir and not dry_run:
-                        self._copy_track(candidates[0].path, auto_add_dir)
+                        self._copy_track(candidates[0], auto_add_dir)
                         copied_tracks.append(track_info)
         
         return {

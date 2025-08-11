@@ -9,6 +9,7 @@ from rich.panel import Panel
 from rich.prompt import Confirm
 
 from ..services.knit_service import KnitService, AlbumGroup
+from ..services.interactive_knit_repair import InteractiveKnitRepairer
 
 console = Console()
 
@@ -39,10 +40,8 @@ console = Console()
               help='MusicBrainz username for faster lookups (or set MUSICBRAINZ_USER env var)')
 @click.option('--mb-pass', type=str, envvar='MUSICBRAINZ_PASS',
               help='MusicBrainz password (or set MUSICBRAINZ_PASS env var)')
-@click.option('--find', '-f', is_flag=True,
-              help='Search for and copy missing tracks to auto-add folder')
 @click.option('--search-dir', '-s', type=click.Path(exists=True, path_type=Path),
-              help='Directory to search for replacement tracks')
+              help='Directory to search for replacement tracks (enables finding and copying missing tracks)')
 @click.option('--auto-add-dir', type=click.Path(path_type=Path),
               help='Override auto-add directory (auto-detected by default)')
 @click.option('--artist', '-a', type=str,
@@ -51,7 +50,7 @@ def knit(xml_path: Path, threshold: float, min_tracks: int, output: Optional[Pat
          dry_run: bool, interactive: bool, checkpoint: bool, limit: Optional[int],
          verbose: bool, use_musicbrainz: bool, acoustid_key: Optional[str],
          mb_user: Optional[str], mb_pass: Optional[str],
-         find: bool, search_dir: Optional[Path], auto_add_dir: Optional[Path],
+         search_dir: Optional[Path], auto_add_dir: Optional[Path],
          artist: Optional[str]) -> None:
     """Analyze album completeness in your music library.
     
@@ -70,7 +69,7 @@ def knit(xml_path: Path, threshold: float, min_tracks: int, output: Optional[Pat
         mfdr knit Library.xml --use-musicbrainz --acoustid-key YOUR_KEY
         
         # Find and copy missing tracks using MusicBrainz
-        mfdr knit Library.xml --use-musicbrainz --find -s /Volumes/Backup
+        mfdr knit Library.xml --use-musicbrainz -s /Volumes/Backup
         
         # Generate markdown report
         mfdr knit Library.xml --output missing-tracks.md
@@ -106,11 +105,8 @@ def knit(xml_path: Path, threshold: float, min_tracks: int, output: Optional[Pat
     if interactive and results['incomplete_list']:
         _interactive_review(results['incomplete_list'], service, console)
     
-    # Find missing tracks if requested
-    if find and results['incomplete_list']:
-        if not search_dir:
-            console.print("[error]❌ --search-dir is required when using --find[/error]")
-            return
+    # Find missing tracks if search directory provided (using new interactive repair)
+    if search_dir and results['incomplete_list']:
         
         # Auto-detect auto-add directory if needed
         if not auto_add_dir:
@@ -136,18 +132,19 @@ def knit(xml_path: Path, threshold: float, min_tracks: int, output: Optional[Pat
             console.print("[error]❌ Could not auto-detect auto-add folder. Use --auto-add-dir[/error]")
             return
         
-        # Find and copy missing tracks
-        find_results = service.find_missing_tracks(
-            incomplete_albums=results['incomplete_list'],
-            search_dir=search_dir,
-            auto_add_dir=auto_add_dir,
-            dry_run=dry_run
-        )
+        # Use interactive repair service
+        repairer = InteractiveKnitRepairer(console)
         
-        console.print()
-        console.print(f"[info]Found {find_results['found']} missing tracks[/info]")
-        if not dry_run:
-            console.print(f"[success]✅ Copied {find_results['copied']} tracks to auto-add[/success]")
+        # Convert single search_dir to list if needed
+        search_dirs = [search_dir] if isinstance(search_dir, Path) else search_dir
+        
+        repair_results = repairer.repair_albums(
+            incomplete_albums=results['incomplete_list'],
+            search_dirs=search_dirs,
+            auto_add_dir=auto_add_dir,
+            dry_run=dry_run,
+            auto_mode=not interactive  # Use interactive mode if --interactive flag is set
+        )
     
     # Generate report if requested
     if output or (dry_run and not output):
