@@ -38,7 +38,8 @@ class InteractiveKnitRepairer:
                       search_dirs: List[Path],
                       auto_add_dir: Path,
                       dry_run: bool = False,
-                      auto_mode: bool = False) -> Dict[str, Any]:
+                      auto_mode: bool = False,
+                      force_refresh: bool = False) -> Dict[str, Any]:
         """
         Interactively repair incomplete albums by finding missing tracks.
         
@@ -68,9 +69,10 @@ class InteractiveKnitRepairer:
             self.console.print("[error]❌ No valid search directories[/error]")
             return self.stats
         
-        # Index search directories
-        self.console.print(f"[cyan]📚 Indexing {len(valid_dirs)} search directories...[/cyan]")
-        search_service = SimpleFileSearch(valid_dirs)
+        # Index search directories with progress bar
+        if not force_refresh:
+            self.console.print(f"\n[cyan]📚 Loading search index...[/cyan]")
+        search_service = SimpleFileSearch(valid_dirs, console=self.console, force_refresh=force_refresh)
         
         # Create knit service for utility methods
         knit_service = KnitService(self.console)
@@ -131,25 +133,41 @@ class InteractiveKnitRepairer:
                             knit_service: KnitService) -> None:
         """Display detailed album information."""
         # Create album info table
-        table = Table(show_header=False, box=box.SIMPLE)
-        table.add_column("Field", style="cyan")
-        table.add_column("Value")
+        info_table = Table(show_header=False, box=box.SIMPLE)
+        info_table.add_column("Field", style="cyan", width=15)
+        info_table.add_column("Value")
         
-        table.add_row("Artist", f"[bold]{album.artist}[/bold]")
-        table.add_row("Album", f"[bold]{album.album}[/bold]")
-        table.add_row("Completeness", f"{completeness:.1%}")
+        info_table.add_row("Artist", f"[bold]{album.artist}[/bold]")
+        info_table.add_row("Album", f"[bold]{album.album}[/bold]")
+        info_table.add_row("Completeness", f"{completeness:.1%}")
         
         # Get track info
         track_numbers = sorted([t.track_number for t in album.tracks if t.track_number])
-        table.add_row("Existing Tracks", f"{', '.join(map(str, track_numbers))}")
+        info_table.add_row("Existing Tracks", f"{', '.join(map(str, track_numbers))}")
         
-        # Get missing tracks
+        self.console.print(info_table)
+        
+        # Get missing tracks and show in separate table
         missing = knit_service._get_missing_tracks(album)
         if missing:
-            missing_nums = [str(t['track_number']) for t in missing]
-            table.add_row("Missing Tracks", f"[red]{', '.join(missing_nums)}[/red]")
-        
-        self.console.print(table)
+            self.console.print("\n[yellow]Missing Tracks:[/yellow]")
+            
+            missing_table = Table(box=box.ROUNDED)
+            missing_table.add_column("#", style="red", width=4)
+            missing_table.add_column("Track Name", style="dim")
+            
+            # Show all missing tracks in table
+            for t in missing:
+                track_num = str(t['track_number'])
+                track_name = t.get('name', f'Track {t["track_number"]}')
+                is_estimated = t.get('estimated', True)
+                
+                if is_estimated or track_name == f'Track {t["track_number"]}':
+                    track_name = "[dim italic]Unknown[/dim italic]"
+                
+                missing_table.add_row(track_num, track_name)
+            
+            self.console.print(missing_table)
     
     def _prompt_album_action(self, is_last: bool) -> str:
         """Prompt user for action on current album."""
@@ -191,13 +209,46 @@ class InteractiveKnitRepairer:
             self.console.print("[green]✓ Album is complete[/green]")
             return False
         
-        self.console.print(f"\n[cyan]🔍 Searching for {len(missing_tracks)} missing tracks...[/cyan]")
+        # Show what we're repairing
+        self.console.print(f"\n[cyan]🔍 Searching for {len(missing_tracks)} missing tracks from:[/cyan]")
+        self.console.print(f"    [bold]{album.artist} - {album.album}[/bold]")
+        
+        # Show example existing tracks to understand naming patterns
+        if album.tracks and len(album.tracks) > 0:
+            example_tracks = sorted(album.tracks, key=lambda t: t.track_number or 0)[:3]
+            self.console.print(f"    [dim]Example existing tracks:[/dim]")
+            for track in example_tracks:
+                if track.track_number and track.name:
+                    self.console.print(f"      [dim]• Track {track.track_number}: {track.name}[/dim]")
         
         tracks_copied = False
         
         for track_info in missing_tracks:
             track_num = track_info['track_number']
-            self.console.print(f"\n  Track {track_num}:")
+            track_name = track_info.get('name', f'Track {track_num}')
+            is_estimated = track_info.get('estimated', True)
+            
+            # Show what we're looking for with real track name if available
+            if is_estimated:
+                self.console.print(f"\n  [bold]Looking for:[/bold] {album.artist} - {album.album} - Track {track_num}")
+            else:
+                self.console.print(f"\n  [bold]Looking for:[/bold] Track {track_num}: [green]{track_name}[/green]")
+                self.console.print(f"    [dim]from {album.artist} - {album.album}[/dim]")
+            
+            # Show search patterns
+            search_patterns = []
+            if not is_estimated:
+                # If we have the real track name, search for it
+                search_patterns.append(f"'{track_name}'")
+                search_patterns.append(f"'{album.artist} {track_name}'")
+            
+            # Always include album/track number patterns as fallback
+            search_patterns.extend([
+                f"'{album.album} {track_num:02d}'",
+                f"'{track_num:02d} {album.artist}'"
+            ])
+            
+            self.console.print(f"  [dim]Search patterns: {', '.join(search_patterns[:3])}[/dim]")
             
             # Search for the track - use artist AND album to improve matching
             candidates = self._find_track_candidates(
@@ -207,7 +258,8 @@ class InteractiveKnitRepairer:
             )
             
             if not candidates:
-                self.console.print(f"    [red]✗ No candidates found[/red]")
+                self.console.print(f"    [red]✗ No files found matching search patterns[/red]")
+                self.console.print(f"    [dim]Tip: Check if the track exists in your search directory[/dim]")
                 self.stats["tracks_skipped"] += 1
                 continue
             
@@ -222,9 +274,35 @@ class InteractiveKnitRepairer:
             filtered_candidates = [c for c, score in scored_candidates if score > 0.3]
             
             if not filtered_candidates:
-                self.console.print(f"    [red]✗ No good matches (all scores too low)[/red]")
-                self.stats["tracks_skipped"] += 1
-                continue
+                # Show why matches were rejected
+                self.console.print(f"    [yellow]⚠ Found {len(candidates)} file(s) but none matched well enough:[/yellow]")
+                
+                # Show top 3 rejected candidates for context
+                for i, (cand, score) in enumerate(scored_candidates[:3], 1):
+                    metadata = self._get_file_metadata(cand)
+                    if metadata:
+                        artist = metadata.get('artist', 'Unknown')
+                        title = metadata.get('title', cand.stem)
+                    else:
+                        artist = "Unknown"
+                        title = cand.stem
+                    
+                    self.console.print(f"      [dim]{i}. {title} by {artist} (score: {score:.1f} - too low)[/dim]")
+                
+                self.console.print(f"    [dim]Tip: Files need artist/album match for score > 0.3[/dim]")
+                
+                # In interactive mode, offer to show low-scoring matches anyway
+                if not auto_mode and len(scored_candidates) > 0:
+                    from rich.prompt import Confirm
+                    if Confirm.ask("    Show low-scoring matches anyway?", default=False):
+                        # Show top 5 even with low scores
+                        filtered_candidates = [c for c, _ in scored_candidates[:5]]
+                    else:
+                        self.stats["tracks_skipped"] += 1
+                        continue
+                else:
+                    self.stats["tracks_skipped"] += 1
+                    continue
             
             self.stats["tracks_found"] += 1
             
@@ -272,8 +350,11 @@ class InteractiveKnitRepairer:
         """
         self.console.print(f"    Found {len(candidates)} candidate(s):")
         
-        # Display candidates with scores
+        # Display candidates with scores and metadata
         for i, (candidate, score) in enumerate(candidates[:5], 1):
+            # Try to get metadata for better display
+            metadata = self._get_file_metadata(candidate)
+            
             # Format score display
             if score >= 0.8:
                 score_display = "[green]●●●[/green]"  # Excellent match
@@ -285,24 +366,42 @@ class InteractiveKnitRepairer:
                 score_display = "[red]●○○[/red]"  # Weak match
                 star = ""
             
-            # Show relative path from parent for brevity
-            try:
-                if candidate.parent.parent.exists():
-                    parent = candidate.parent.parent
-                    rel_path = candidate.relative_to(parent)
-                    display_text = f"{score_display} {rel_path}{star}"
-                else:
+            # Build display text with metadata if available
+            if metadata and (metadata.get('title') or metadata.get('artist')):
+                title = metadata.get('title', 'Unknown Title')
+                artist = metadata.get('artist', 'Unknown Artist')
+                album_name = metadata.get('album', '')
+                track_no = metadata.get('track_number', '')
+                
+                # Format: Score | Track# - Title by Artist [Album]
+                display_parts = [score_display]
+                if track_no:
+                    display_parts.append(f"Track {track_no}")
+                display_parts.append(f"[bold]{title}[/bold]")
+                display_parts.append(f"by {artist}")
+                if album_name:
+                    display_parts.append(f"[dim]({album_name})[/dim]")
+                
+                display_text = " ".join(display_parts) + star
+            else:
+                # Fallback to path display
+                try:
+                    if candidate.parent.parent.exists():
+                        parent = candidate.parent.parent
+                        rel_path = candidate.relative_to(parent)
+                        display_text = f"{score_display} {rel_path}{star}"
+                    else:
+                        display_text = f"{score_display} {candidate.name}{star}"
+                except:
                     display_text = f"{score_display} {candidate.name}{star}"
-            except:
-                display_text = f"{score_display} {candidate.name}{star}"
             
-            # Add context info
+            # Add match context
             path_str = str(candidate)
             context = []
             if album.artist.lower() in path_str.lower():
-                context.append("artist ✓")
+                context.append("[green]✓[/green] artist")
             if album.album.lower() in path_str.lower():
-                context.append("album ✓")
+                context.append("[green]✓[/green] album")
             
             if context:
                 display_text += f" [{', '.join(context)}]"
@@ -369,32 +468,83 @@ class InteractiveKnitRepairer:
         """Find candidate tracks using multiple search strategies."""
         candidates = []
         track_num = track_info['track_number']
+        track_name = track_info.get('name', f'Track {track_num}')
+        is_estimated = track_info.get('estimated', True)
         
-        # First try with the track name if we have it
-        if track_info.get('name') and track_info['name'] != f"Track {track_num}":
-            candidates = search_service.find_by_name(
-                track_info['name'],
-                artist=album.artist
-            )
-        
-        # If no results, try various track number formats
-        if not candidates:
-            alt_searches = [
-                f"{track_num:02d}",  # "01", "02", etc
-                f"{track_num}",      # "1", "2", etc  
-                f"track {track_num}",
-                f"track{track_num}",
-                f"{track_num:02d} {album.artist}",  # "01 Artist Name"
-                f"{album.artist} {track_num:02d}",  # "Artist Name 01"
-                f"{album.album} {track_num:02d}",   # "Album Name 01"
+        # If we have the real track name, search for it first
+        if not is_estimated and track_name != f'Track {track_num}':
+            # Search by actual track name
+            name_searches = [
+                track_name,  # Just the track name
+                f"{album.artist} {track_name}",  # Artist + track name
+                f"{track_name} {album.artist}",  # Track name + artist
             ]
             
-            for alt_search in alt_searches:
-                candidates = search_service.find_by_name(alt_search, artist=album.artist)
+            for search_term in name_searches:
+                candidates = search_service.find_by_name(search_term, artist=album.artist)
                 if candidates:
-                    break
+                    # Prioritize candidates from the same album
+                    filtered = []
+                    other = []
+                    for c in candidates:
+                        path_str = str(c).lower()
+                        album_norm = album.album.lower()
+                        if album_norm in path_str or album_norm.replace(' ', '') in path_str.replace(' ', ''):
+                            filtered.append(c)
+                        else:
+                            other.append(c)
+                    
+                    # Return album matches first, then others
+                    result = filtered[:7] + other[:3]
+                    if result:
+                        return result
         
-        return candidates
+        # Try to find tracks from the same album
+        album_searches = [
+            f"{album.album} {track_num:02d}",
+            f"{album.album} track {track_num}",
+            f"{track_num:02d} {album.album}",
+        ]
+        
+        for search_term in album_searches:
+            candidates = search_service.find_by_name(search_term, artist=album.artist)
+            if candidates:
+                # Filter to only candidates that likely match this album
+                filtered = []
+                for c in candidates:
+                    path_str = str(c).lower()
+                    album_norm = album.album.lower()
+                    # Check if album name is in the path
+                    if album_norm in path_str or album_norm.replace(' ', '') in path_str.replace(' ', ''):
+                        filtered.append(c)
+                if filtered:
+                    return filtered[:10]  # Return top matches
+        
+        # If no album matches, try artist + track number
+        artist_searches = [
+            f"{album.artist} {track_num:02d}",
+            f"{track_num:02d} {album.artist}",
+            f"{album.artist} track {track_num}",
+        ]
+        
+        for search_term in artist_searches:
+            candidates = search_service.find_by_name(search_term, artist=album.artist)
+            if candidates:
+                return candidates[:10]
+        
+        # Last resort: just track number formats
+        track_searches = [
+            f"{track_num:02d}",  # "01", "02", etc
+            f"track {track_num}",
+            f"{track_num}",      # "1", "2", etc  
+        ]
+        
+        for search_term in track_searches:
+            candidates = search_service.find_by_name(search_term, artist=album.artist)
+            if candidates:
+                return candidates[:10]
+        
+        return []
     
     def _score_candidates(self, candidates: List[Path], 
                          album: AlbumGroup,
@@ -454,6 +604,57 @@ class InteractiveKnitRepairer:
         # Sort by score (highest first)
         scored.sort(key=lambda x: x[1], reverse=True)
         return scored
+    
+    def _get_file_metadata(self, file_path: Path) -> Optional[Dict[str, Any]]:
+        """Get metadata from an audio file."""
+        try:
+            from mutagen import File as MutagenFile
+            
+            audio = MutagenFile(file_path)
+            if audio is None:
+                return None
+            
+            metadata = {}
+            
+            # Get title
+            for key in ['TIT2', 'Title', 'title', '\xa9nam']:
+                if key in audio:
+                    val = str(audio[key][0]) if isinstance(audio[key], list) else str(audio[key])
+                    metadata['title'] = val
+                    break
+            
+            # Get artist
+            for key in ['TPE1', 'Artist', 'artist', '\xa9ART']:
+                if key in audio:
+                    val = str(audio[key][0]) if isinstance(audio[key], list) else str(audio[key])
+                    metadata['artist'] = val
+                    break
+            
+            # Get album
+            for key in ['TALB', 'Album', 'album', '\xa9alb']:
+                if key in audio:
+                    val = str(audio[key][0]) if isinstance(audio[key], list) else str(audio[key])
+                    metadata['album'] = val
+                    break
+            
+            # Get track number
+            for key in ['TRCK', 'Track', 'tracknumber', 'trkn']:
+                if key in audio:
+                    val = str(audio[key][0]) if isinstance(audio[key], list) else str(audio[key])
+                    # Extract just the track number (e.g., "3/10" -> 3)
+                    if '/' in val:
+                        val = val.split('/')[0]
+                    try:
+                        metadata['track_number'] = int(val)
+                    except (ValueError, TypeError):
+                        pass
+                    break
+            
+            return metadata
+            
+        except Exception:
+            # Silently fail - we'll fall back to filename
+            return None
     
     def _display_summary(self) -> None:
         """Display repair summary."""

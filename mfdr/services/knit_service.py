@@ -327,7 +327,7 @@ class KnitService:
         return None
     
     def _get_missing_tracks(self, album: AlbumGroup) -> List[Dict[str, Any]]:
-        """Get list of missing tracks for an album."""
+        """Get list of missing tracks for an album with real or estimated names."""
         track_numbers = [t.track_number for t in album.tracks if t.track_number]
         
         if not track_numbers:
@@ -336,14 +336,39 @@ class KnitService:
         expected = track_numbers_to_expected(track_numbers)
         existing = set(track_numbers)
         
+        # Try to get real track names from online sources
+        track_names = {}
+        try:
+            from .track_lookup_service import TrackLookupService
+            lookup_service = TrackLookupService()
+            
+            # Get all tracks for the album
+            all_tracks = lookup_service.get_album_tracks(album.artist, album.album)
+            if all_tracks:
+                for track in all_tracks:
+                    track_names[track['number']] = track['title']
+                logger.debug(f"Found track names for {album.artist} - {album.album}")
+        except Exception as e:
+            logger.debug(f"Track lookup failed: {e}")
+        
         missing = []
         for i in range(1, expected + 1):
             if i not in existing:
+                # Use real track name if available
+                if i in track_names:
+                    track_name = track_names[i]
+                    estimated = False
+                else:
+                    # Fall back to estimation
+                    track_name = f"Track {i}"
+                    estimated = True
+                
                 missing.append({
                     "artist": album.artist,
                     "album": album.album,
                     "track_number": i,
-                    "name": f"Track {i}"
+                    "name": track_name,
+                    "estimated": estimated
                 })
         
         return missing
@@ -407,12 +432,21 @@ class KnitService:
                 track_numbers = sorted([t.track_number for t in album.tracks if t.track_number])
                 report.append(f"**Tracks:** {', '.join(map(str, track_numbers))}\n")
                 
-                # Show missing tracks
+                # Show missing tracks with real names if available
                 missing = self._get_missing_tracks(album)
                 if missing:
                     report.append("**Missing:**")
                     for track in missing:
-                        report.append(f"- Track {track['track_number']}")
+                        track_num = track['track_number']
+                        track_name = track.get('name', f'Track {track_num}')
+                        is_estimated = track.get('estimated', True)
+                        
+                        if not is_estimated and track_name != f'Track {track_num}':
+                            # We have the real track name
+                            report.append(f"- Track {track_num}: {track_name}")
+                        else:
+                            # Just the track number
+                            report.append(f"- Track {track_num}")
                 
                 report.append("")
         

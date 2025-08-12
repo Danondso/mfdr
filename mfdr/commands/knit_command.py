@@ -46,12 +46,14 @@ console = Console()
               help='Override auto-add directory (auto-detected by default)')
 @click.option('--artist', '-a', type=str,
               help='Only process albums by this artist (case-insensitive, partial match)')
+@click.option('--refresh-index', is_flag=True,
+              help='Force refresh of cached search index')
 def knit(xml_path: Path, threshold: float, min_tracks: int, output: Optional[Path],
          dry_run: bool, interactive: bool, checkpoint: bool, limit: Optional[int],
          verbose: bool, use_musicbrainz: bool, acoustid_key: Optional[str],
          mb_user: Optional[str], mb_pass: Optional[str],
          search_dir: Optional[Path], auto_add_dir: Optional[Path],
-         artist: Optional[str]) -> None:
+         artist: Optional[str], refresh_index: bool) -> None:
     """Analyze album completeness in your music library.
     
     This command identifies incomplete albums by finding gaps in track numbers.
@@ -68,8 +70,11 @@ def knit(xml_path: Path, threshold: float, min_tracks: int, output: Optional[Pat
         # With API key for better MusicBrainz lookups
         mfdr knit Library.xml --use-musicbrainz --acoustid-key YOUR_KEY
         
-        # Find and copy missing tracks using MusicBrainz
-        mfdr knit Library.xml --use-musicbrainz -s /Volumes/Backup
+        # Find and copy missing tracks (auto-detect auto-add folder)
+        mfdr knit Library.xml -s /Volumes/Backup
+        
+        # Interactive mode for reviewing each match
+        mfdr knit Library.xml -s /Volumes/Backup --interactive
         
         # Generate markdown report
         mfdr knit Library.xml --output missing-tracks.md
@@ -143,7 +148,8 @@ def knit(xml_path: Path, threshold: float, min_tracks: int, output: Optional[Pat
             search_dirs=search_dirs,
             auto_add_dir=auto_add_dir,
             dry_run=dry_run,
-            auto_mode=not interactive  # Use interactive mode if --interactive flag is set
+            auto_mode=not interactive,  # Use interactive mode if --interactive flag is set
+            force_refresh=refresh_index
         )
     
     # Generate report if requested
@@ -173,30 +179,57 @@ def knit(xml_path: Path, threshold: float, min_tracks: int, output: Optional[Pat
 
 def _interactive_review(incomplete_albums: list, service: KnitService, console: Console) -> None:
     """Interactive review of incomplete albums."""
+    from rich.table import Table
+    from rich import box
+    
     console.print()
     console.print(Panel.fit("📋 Interactive Album Review", style="bold cyan"))
     console.print(f"[info]Reviewing {len(incomplete_albums)} incomplete albums[/info]")
     console.print()
     
     for idx, (album, completeness) in enumerate(incomplete_albums, 1):
-        console.print(f"[bold]Album {idx}/{len(incomplete_albums)}[/bold]")
-        console.print(f"Artist: {album.artist}")
-        console.print(f"Album: {album.album}")
-        console.print(f"Completeness: {completeness:.1%}")
+        # Album header
+        console.print(f"\n[bold cyan]Album {idx}/{len(incomplete_albums)}[/bold cyan]")
+        console.print("─" * 80)
         
-        # Show tracks
+        # Album info table
+        info_table = Table(show_header=False, box=box.SIMPLE)
+        info_table.add_column("Field", style="cyan", width=15)
+        info_table.add_column("Value")
+        
+        info_table.add_row("Artist", f"[bold]{album.artist}[/bold]")
+        info_table.add_row("Album", f"[bold]{album.album}[/bold]")
+        info_table.add_row("Completeness", f"{completeness:.1%}")
+        
+        # Show existing tracks
         tracks = sorted([t.track_number for t in album.tracks if t.track_number])
-        console.print(f"Tracks: {', '.join(map(str, tracks))}")
+        info_table.add_row("Existing Tracks", f"{', '.join(map(str, tracks))}")
         
-        # Show missing
+        console.print(info_table)
+        
+        # Show missing tracks in a table
         missing = service._get_missing_tracks(album)
         if missing:
-            console.print(f"Missing: {', '.join(str(t['track_number']) for t in missing)}")
+            console.print("\n[yellow]Missing Tracks:[/yellow]")
+            
+            missing_table = Table(box=box.ROUNDED)
+            missing_table.add_column("#", style="red", width=4)
+            missing_table.add_column("Track Name", style="dim")
+            
+            for t in missing:
+                track_num = str(t['track_number'])
+                track_name = t.get('name', f'Track {t["track_number"]}')
+                is_estimated = t.get('estimated', True)
+                
+                if is_estimated or track_name == f'Track {t["track_number"]}':
+                    track_name = "[dim italic]Unknown[/dim italic]"
+                
+                missing_table.add_row(track_num, track_name)
+            
+            console.print(missing_table)
         
         console.print()
         
         # Ask for action
         if not Confirm.ask("Continue to next album?", default=True):
             break
-        
-        console.print()
