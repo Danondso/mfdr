@@ -162,7 +162,7 @@ class TestMainComprehensive:
             mock_parser.return_value = mock_instance
             mock_instance.parse.return_value = [mock_track]
             
-            with patch('mfdr.completeness_checker.CompletenessChecker') as mock_checker:
+            with patch('mfdr.services.completeness_checker.CompletenessChecker') as mock_checker:
                 checker_instance = Mock()
                 mock_checker.return_value = checker_instance
                 checker_instance.check_file.return_value = (True, {})
@@ -196,7 +196,7 @@ class TestMainComprehensive:
         (music_dir / "song1.mp3").touch()
         (music_dir / "song2.m4a").touch()
         
-        with patch('mfdr.simple_file_search.SimpleFileSearch') as mock_search:
+        with patch('mfdr.services.simple_file_search.SimpleFileSearch') as mock_search:
             mock_instance = Mock()
             mock_search.return_value = mock_instance
             mock_instance.search_directory.return_value = []
@@ -223,10 +223,10 @@ class TestMainComprehensive:
             mock_parser.return_value = mock_instance
             mock_instance.parse.return_value = [mock_track]
             
-            with patch('mfdr.simple_file_search.SimpleFileSearch'):
-                with patch('mfdr.track_matcher.TrackMatcher'):
+            with patch('mfdr.services.simple_file_search.SimpleFileSearch'):
+                with patch('mfdr.services.track_matcher.TrackMatcher'):
                     # Just test that auto-replace flag is accepted
-                    result = runner.invoke(cli, ['scan', str(xml_file), '--auto-replace'])
+                    result = runner.invoke(cli, ['scan', str(xml_file), '--replace'])
                     # May exit with various codes depending on the path taken
                     assert result.exit_code in [0, 1, 2]
     
@@ -249,7 +249,7 @@ class TestMainComprehensive:
             mock_parser.return_value = mock_instance
             mock_instance.parse.return_value = [mock_track]
             
-            with patch('mfdr.simple_file_search.SimpleFileSearch'):
+            with patch('mfdr.services.simple_file_search.SimpleFileSearch'):
                 result = runner.invoke(cli, ['scan', str(xml_file)])
                 assert result.exit_code in [0, 1]
                 # Should create M3U playlist for missing tracks

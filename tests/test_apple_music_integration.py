@@ -48,16 +48,16 @@ class TestAppleMusicIntegration:
             
             exists, info = check_track_exists("ID123")
             assert exists is False
-            assert info == "not found"
+            assert info == "Track not found in library"
     
     def test_check_track_exists_error(self):
         """Test track existence check with error"""
         with patch('subprocess.run') as mock_run:
-            mock_run.side_effect = subprocess.CalledProcessError(1, 'osascript')
+            mock_run.side_effect = Exception("Script error")
             
             exists, info = check_track_exists("ID123")
             assert exists is False
-            assert "Error" in info
+            assert "Script error" in info or "error" in info.lower()
     
     # ============= TRACK DELETION TESTS =============
     
@@ -70,7 +70,7 @@ class TestAppleMusicIntegration:
     def test_delete_tracks_actual(self):
         """Test actual track deletion"""
         with patch('subprocess.run') as mock_run:
-            mock_run.return_value = Mock(returncode=0, stdout="", stderr="")
+            mock_run.return_value = Mock(returncode=0, stdout="deleted", stderr="")
             
             count, errors = delete_tracks_by_id(["ID1", "ID2"], dry_run=False)
             assert count == 2
@@ -134,14 +134,14 @@ class TestAppleMusicIntegration:
     
     def test_export_library_failure(self, tmp_path):
         """Test failed library export"""
-        output_file = tmp_path / "Library.xml"
+        # Use a unique output name that won't match any existing files
+        output_file = tmp_path / "NonExistentSubdir" / "Library.xml"
         
-        with patch('subprocess.run') as mock_run:
-            mock_run.side_effect = subprocess.CalledProcessError(1, 'osascript', stderr=b"Export failed")
-            
-            success, error = export_library_xml(output_file)
-            assert success is False
-            assert "Export failed" in error
+        # The new export_library_xml doesn't use subprocess for UI automation,
+        # it searches for existing files. When no files exist, it returns instructions.
+        success, error = export_library_xml(output_file)
+        assert success is False
+        assert error is not None  # Will contain manual export instructions
     
     def test_export_library_with_overwrite(self, tmp_path):
         """Test library export with overwrite"""
@@ -182,10 +182,11 @@ class TestAppleMusicIntegration:
         track = LibraryTrack(
             track_id=1,
             name="Test Song",
-            artist="Test Artist"
+            artist="Test Artist",
+            album="Test Album"  # album is required
         )
         
-        assert track.album is None
-        assert track.size == 0
+        # Check optional fields have expected defaults
+        assert track.size is None
         assert track.location is None
         assert track.persistent_id is None

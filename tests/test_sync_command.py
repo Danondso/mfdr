@@ -68,7 +68,7 @@ class TestSyncCommand:
         auto_add_dir = tmp_path / "AutoAdd"
         auto_add_dir.mkdir()
         
-        with patch('mfdr.library_xml_parser.LibraryXMLParser') as mock_parser:
+        with patch('mfdr.commands.sync_command.LibraryXMLParser') as mock_parser:
             mock_instance = Mock()
             mock_parser.return_value = mock_instance
             mock_instance.parse.return_value = mock_tracks
