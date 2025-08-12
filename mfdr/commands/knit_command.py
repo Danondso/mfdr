@@ -8,7 +8,7 @@ from rich.console import Console
 from rich.panel import Panel
 from rich.prompt import Confirm
 
-from ..services.knit_service import KnitService, AlbumGroup
+from ..services.knit_service import KnitService
 from ..services.interactive_knit_repair import InteractiveKnitRepairer
 
 console = Console()
@@ -143,7 +143,7 @@ def knit(xml_path: Path, threshold: float, min_tracks: int, output: Optional[Pat
         # Convert single search_dir to list if needed
         search_dirs = [search_dir] if isinstance(search_dir, Path) else search_dir
         
-        repair_results = repairer.repair_albums(
+        repairer.repair_albums(
             incomplete_albums=results['incomplete_list'],
             search_dirs=search_dirs,
             auto_add_dir=auto_add_dir,

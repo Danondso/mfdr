@@ -1,8 +1,8 @@
 """File utility functions."""
 
 from pathlib import Path
-from typing import Optional
-import os
+
+
 
 def format_size(size_bytes: int) -> str:
     """Format size in bytes to human readable format."""

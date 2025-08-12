@@ -4,7 +4,6 @@ import logging
 from pathlib import Path
 from typing import List, Dict, Any, Optional, Set
 from collections import defaultdict
-from datetime import datetime
 
 from rich.console import Console
 from rich.panel import Panel
