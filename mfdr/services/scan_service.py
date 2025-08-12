@@ -10,7 +10,7 @@ from ..utils.library_xml_parser import LibraryTrack
 from ..utils.file_manager import FileManager, FileCandidate
 from .track_matcher import TrackMatcher
 from .completeness_checker import CompletenessChecker
-from ..utils.constants import DEFAULT_AUTO_ACCEPT_THRESHOLD, MIN_AUDIO_FILE_SIZE_KB
+from ..utils.constants import DEFAULT_AUTO_ACCEPT_THRESHOLD
 from ..utils.file_utils import validate_destination_path
 
 logger = logging.getLogger(__name__)
@@ -42,7 +42,7 @@ class ScanService:
             track_matcher: TrackMatcher instance or None to create new
             checker: CompletenessChecker instance or None to create new
         """
-        self.file_manager = file_manager or FileManager()
+        self.file_manager = file_manager or FileManager(search_directory=Path.cwd())
         self.track_matcher = track_matcher or TrackMatcher()
         self.checker = checker or CompletenessChecker()
         

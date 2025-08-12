@@ -4,7 +4,7 @@ Advanced track matching with multi-criteria scoring
 
 import logging
 from typing import List, Optional, Tuple, Dict
-from pathlib import Path
+
 from fuzzywuzzy import fuzz
 import re
 
@@ -115,7 +115,7 @@ class TrackMatcher:
         track_album = self._normalize_for_matching(track.album)
         
         filename = self._normalize_for_matching(candidate.filename)
-        directory = self._normalize_for_matching(candidate.directory)
+        # directory = self._normalize_for_matching(candidate.directory)  # Not currently used
         parent_dir = self._normalize_for_matching(candidate.path.parent.parent.name)
         full_path = self._normalize_for_matching(str(candidate.path.parent))
         

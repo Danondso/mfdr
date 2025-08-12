@@ -2,14 +2,12 @@
 
 import logging
 from pathlib import Path
-from typing import List, Dict, Any, Optional, Set, Tuple
+from typing import List, Dict, Any, Optional, Tuple
 from collections import defaultdict
 from datetime import datetime
 
 from rich.console import Console
 from rich.panel import Panel
-from rich.table import Table
-from rich import box
 
 from ..utils.library_xml_parser import LibraryXMLParser, LibraryTrack
 from .knit_optimizer import track_numbers_to_expected
@@ -311,10 +309,13 @@ class KnitService:
                                         return release.get("track_count", None)
             
             # Fallback to search by metadata
-            releases = self.mb_client.search_release(
-                artist=album.artist,
-                release=album.album
-            )
+            if hasattr(self.mb_client, 'search_release'):
+                releases = self.mb_client.search_release(
+                    artist=album.artist,
+                    release=album.album
+                )
+            else:
+                releases = None
             
             if releases and "releases" in releases:
                 for release in releases["releases"]:

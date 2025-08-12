@@ -1,6 +1,6 @@
 """Interactive candidate selection UI for track replacement."""
 
-from typing import Optional, List, Tuple
+from typing import Optional, List
 from pathlib import Path
 from rich.console import Console
 from rich.table import Table

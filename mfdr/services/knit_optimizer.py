@@ -3,7 +3,6 @@ Optimized knit command helper functions for parallel processing
 """
 
 import logging
-from pathlib import Path
 from typing import Dict, List, Any, Tuple
 from concurrent.futures import ThreadPoolExecutor, as_completed, TimeoutError
 import time
@@ -228,7 +227,7 @@ def search_for_single_track(album, track_info, file_search, score_candidate_func
                 alt_title = track_title.replace('-', ' ').strip()
                 alt_title = ' '.join(alt_title.split())  # Normalize spaces
                 candidates = file_search.find_by_name(alt_title, artist=album.get('artist'))
-                if verbose and candidates:
+                if candidates:
                     logger.debug(f"Found candidates using alternate search: '{alt_title}'")
             
             # If still no candidates and track name contains "Intro", "Outro", or "Interlude",
@@ -269,7 +268,7 @@ def search_for_single_track(album, track_info, file_search, score_candidate_func
                         'file_path': best_path,
                         'score': best_score
                     }
-                elif best_score >= 40 and verbose:
+                elif best_score >= 40:
                     # Log near-misses for debugging
                     logger.debug(f"Near miss for '{track_title}': {best_path.name} (score: {best_score})")
         
@@ -359,7 +358,7 @@ def parallel_track_search(
                 logger.debug(f"Parallel track search failed: {e}")
                 # Fall back to sequential
                 for track in tracks_to_search:
-                    result = search_for_single_track(album, track, file_search, score_candidate_func, verbose)
+                    result = search_for_single_track(album, track, file_search, score_candidate_func)
                     if result:
                         album_replacements.append(result)
         else:

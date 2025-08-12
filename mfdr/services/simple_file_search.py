@@ -4,7 +4,7 @@ Simple, effective file search that actually finds files (like macOS Finder)
 
 import logging
 from pathlib import Path
-from typing import List, Optional, Set, Dict, Any
+from typing import List, Optional, Dict, Any
 import unicodedata
 import re
 import json

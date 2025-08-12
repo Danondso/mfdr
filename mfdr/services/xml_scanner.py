@@ -2,16 +2,16 @@
 
 import logging
 from pathlib import Path
-from typing import List, Dict, Any, Optional, Tuple
+from typing import List, Dict, Any, Optional
 from collections import defaultdict
 
 from rich.console import Console
 from rich.panel import Panel
-from rich.table import Table
-from rich import box
+
+
 
 from ..utils.library_xml_parser import LibraryXMLParser, LibraryTrack
-from ..utils.file_manager import FileManager
+
 from .track_matcher import TrackMatcher
 from .completeness_checker import CompletenessChecker
 from .simple_file_search import SimpleFileSearch
@@ -77,7 +77,7 @@ class XMLScannerService:
         # Initialize checkpoint manager
         checkpoint_file = Path("scan_checkpoint.json") if checkpoint else None
         checkpoint_mgr = CheckpointManager(checkpoint_file)
-        checkpoint_data = checkpoint_mgr.load()
+        checkpoint_mgr.load()  # Load checkpoint data
         last_processed = checkpoint_mgr.get("last_processed", 0)
         
         # Load and parse XML

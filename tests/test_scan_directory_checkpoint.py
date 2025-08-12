@@ -20,7 +20,7 @@ class TestScanDirectoryCheckpoint:
         with patch('mfdr.services.directory_scanner.CompletenessChecker') as mock:
             checker = MagicMock()
             mock.return_value = checker
-            checker.check_audio_integrity.return_value = (True, {})
+            checker.check_file.return_value = (True, {})
             checker.fast_corruption_check.return_value = (True, {})
             yield checker
     
@@ -89,7 +89,7 @@ class TestScanDirectoryCheckpoint:
                 assert 'Resuming scan' in result.output
                 
                 # Should only check the remaining 3 files
-                assert mock_checker.check_audio_integrity.call_count == 3
+                assert mock_checker.check_file.call_count == 3
     
     def test_checkpoint_with_different_files(self, runner, mock_checker, temp_music_dir):
         """Test checkpoint with files from different directory"""
@@ -112,7 +112,7 @@ class TestScanDirectoryCheckpoint:
                 assert 'Resuming scan' in result.output
                 
                 # Should check all 5 files since the processed file is from a different directory
-                assert mock_checker.check_audio_integrity.call_count == 5
+                assert mock_checker.check_file.call_count == 5
     
     def test_checkpoint_cleanup_on_completion(self, runner, mock_checker, temp_music_dir):
         """Test that checkpoint file is removed on successful completion"""
@@ -145,7 +145,7 @@ class TestScanDirectoryCheckpoint:
             mock_checker_class.return_value = checker
             
             # Simulate interruption after 2 files
-            checker.check_audio_integrity.side_effect = [
+            checker.check_file.side_effect = [
                 (True, {}),
                 (True, {}),
                 KeyboardInterrupt()
@@ -170,7 +170,7 @@ class TestScanDirectoryCheckpoint:
     def test_checkpoint_with_corrupted_files(self, runner, mock_checker, temp_music_dir):
         """Test checkpoint saving with corrupted files found"""
         # Mark some files as corrupted
-        mock_checker.check_audio_integrity.side_effect = [
+        mock_checker.check_file.side_effect = [
             (True, {}),
             (False, {'checks_failed': ['no_metadata']}),
             (True, {}),
@@ -231,7 +231,7 @@ class TestScanDirectoryCheckpoint:
                 assert 'DRY RUN' in result.output
                 
                 # Check that dry run mode was used
-                assert mock_checker.check_audio_integrity.call_count == 4  # Should check remaining 4 files
+                assert mock_checker.check_file.call_count == 4  # Should check remaining 4 files
     
     def test_checkpoint_with_fast_scan(self, runner, mock_checker, temp_music_dir):
         """Test checkpoint functionality with fast scan mode"""
@@ -248,4 +248,4 @@ class TestScanDirectoryCheckpoint:
                 assert result.exit_code == 0
                 # Should use fast_corruption_check instead of check_file
                 assert mock_checker.fast_corruption_check.call_count == 5
-                assert mock_checker.check_audio_integrity.call_count == 0
+                assert mock_checker.check_file.call_count == 0

@@ -85,4 +85,4 @@ cli.add_command(scan)
 cli.add_command(knit)
 
 if __name__ == "__main__":
-    cli()
+    cli(auto_envvar_prefix='MFDR')

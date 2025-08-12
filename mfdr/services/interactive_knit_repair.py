@@ -11,7 +11,6 @@ from rich.table import Table
 from rich.prompt import Prompt, Confirm
 from rich import box
 
-from ..utils.library_xml_parser import LibraryTrack
 from .knit_service import AlbumGroup, KnitService
 from .simple_file_search import SimpleFileSearch
 
@@ -293,7 +292,6 @@ class InteractiveKnitRepairer:
                 
                 # In interactive mode, offer to show low-scoring matches anyway
                 if not auto_mode and len(scored_candidates) > 0:
-                    from rich.prompt import Confirm
                     if Confirm.ask("    Show low-scoring matches anyway?", default=False):
                         # Show top 5 even with low scores
                         filtered_candidates = [c for c, _ in scored_candidates[:5]]

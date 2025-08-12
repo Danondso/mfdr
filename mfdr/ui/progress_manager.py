@@ -1,6 +1,6 @@
 """Centralized progress bar management."""
 
-from typing import Optional, Any
+
 from rich.console import Console
 from rich.progress import (
     Progress,

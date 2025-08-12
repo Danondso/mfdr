@@ -159,7 +159,7 @@ class DirectoryScannerService:
         if fast_scan:
             is_good, details = self.checker.fast_corruption_check(file_path)
         else:
-            is_good, details = self.checker.check_audio_integrity(file_path)
+            is_good, details = self.checker.check_file(file_path)
         
         if not is_good:
             # Log corruption details
