@@ -73,13 +73,11 @@ def cli(verbose: bool):
 
 
 # Import commands from separate modules
-from .commands.export_command import export
 from .commands.sync_command import sync
 from .commands.scan_command import scan
 from .commands.knit_command import knit
 
 # Register commands with CLI
-cli.add_command(export)
 cli.add_command(sync)
 cli.add_command(scan)
 cli.add_command(knit)
