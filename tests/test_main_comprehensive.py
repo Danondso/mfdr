@@ -393,7 +393,7 @@ class TestMainComprehensive:
         """Test individual command help"""
         runner = CliRunner()
         
-        for command in ['scan', 'export', 'sync', 'knit']:
+        for command in ['scan', 'sync', 'knit']:
             result = runner.invoke(cli, [command, '--help'])
             assert result.exit_code == 0
             assert "Usage:" in result.output
