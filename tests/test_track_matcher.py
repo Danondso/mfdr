@@ -1,9 +1,9 @@
 import pytest
 from pathlib import Path
 from unittest.mock import Mock, MagicMock, patch
-from mfdr.track_matcher import TrackMatcher
-from mfdr.library_xml_parser import LibraryTrack
-from mfdr.file_manager import FileCandidate
+from mfdr.services.track_matcher import TrackMatcher
+from mfdr.utils.library_xml_parser import LibraryTrack
+from mfdr.utils.file_manager import FileCandidate
 from fuzzywuzzy import fuzz
 
 

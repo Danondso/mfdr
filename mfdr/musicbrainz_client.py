@@ -88,6 +88,11 @@ class MusicBrainzClient:
         self.last_request_time = 0
         self.authenticated = False
         
+        # In-memory cache index: cache_key -> {timestamp: datetime, path: Path, expired: bool}
+        # Also maintain hash -> cache_key mapping for reverse lookups
+        self._cache_index: Dict[str, Dict] = {}
+        self._hash_to_key: Dict[str, str] = {}
+        
         # Set rate limit based on authentication
         if mb_username and mb_password:
             self.rate_limit_delay = self.AUTHENTICATED_RATE_LIMIT
@@ -108,9 +113,97 @@ class MusicBrainzClient:
                 musicbrainzngs.auth(mb_username, mb_password)
                 logger.debug(f"Authenticated as {mb_username}")
         
-        # Setup cache directory
+        # Setup cache directory and load cache index
         if cache_enabled:
             self.CACHE_DIR.mkdir(parents=True, exist_ok=True)
+            self._load_cache_index()
+    
+    def _load_cache_index(self):
+        """Load cache index from disk into memory for fast lookups"""
+        if not self.cache_enabled or not self.CACHE_DIR.exists():
+            return
+        
+        logger.debug("Loading cache index...")
+        self._cache_index.clear()
+        self._hash_to_key.clear()
+        
+        # Scan all cache files and build index
+        cache_files = list(self.CACHE_DIR.glob("*.json"))
+        loaded_count = 0
+        expired_count = 0
+        
+        for cache_file in cache_files:
+            try:
+                hash_key = cache_file.stem
+                
+                # Read cache data to extract original cache key and timestamp
+                with open(cache_file, 'r') as f:
+                    cache_data = json.load(f)
+                
+                timestamp_str = cache_data.get('timestamp')
+                if not timestamp_str:
+                    continue
+                
+                # Try to get the original cache key from the cache data
+                # We need to add this when saving to cache
+                original_key = cache_data.get('cache_key')
+                if not original_key:
+                    # Skip files without cache key info (legacy format)
+                    logger.debug(f"Skipping legacy cache file {cache_file.name}")
+                    continue
+                
+                timestamp = datetime.fromisoformat(timestamp_str)
+                is_expired = datetime.now() - timestamp > timedelta(days=self.CACHE_EXPIRY_DAYS)
+                
+                # Store in index using original cache key
+                self._cache_index[original_key] = {
+                    'timestamp': timestamp,
+                    'path': cache_file,
+                    'expired': is_expired,
+                    'hash_key': hash_key
+                }
+                
+                # Maintain hash -> key mapping
+                self._hash_to_key[hash_key] = original_key
+                
+                if is_expired:
+                    expired_count += 1
+                else:
+                    loaded_count += 1
+                    
+            except Exception as e:
+                logger.debug(f"Failed to index cache file {cache_file}: {e}")
+        
+        logger.debug(f"Cache index loaded: {loaded_count} valid, {expired_count} expired entries")
+        
+        # Clean up expired entries if we found any
+        if expired_count > 0:
+            self._cleanup_expired_cache()
+    
+    def _cleanup_expired_cache(self):
+        """Remove expired cache entries from disk and index"""
+        expired_keys = [k for k, v in self._cache_index.items() if v['expired']]
+        
+        for hash_key in expired_keys:
+            try:
+                cache_entry = self._cache_index[hash_key]
+                cache_entry['path'].unlink(missing_ok=True)
+                del self._cache_index[hash_key]
+            except Exception as e:
+                logger.debug(f"Failed to cleanup expired cache {hash_key}: {e}")
+        
+        if expired_keys:
+            logger.debug(f"Cleaned up {len(expired_keys)} expired cache entries")
+    
+    def _get_cache_key_from_hash(self, hash_key: str) -> Optional[str]:
+        """
+        Helper to resolve original cache key from hash.
+        This is needed for reverse lookups in the index.
+        Since we can't reverse the hash, we'll try common patterns.
+        """
+        # This is a limitation - we can't reverse MD5 hashes
+        # For now, we'll use the hash_key directly in lookups
+        return hash_key
     
     def _rate_limit(self):
         """Enforce rate limiting for MusicBrainz API"""
@@ -132,39 +225,71 @@ class MusicBrainzClient:
         if not self.cache_enabled:
             return None
         
-        cache_path = self._get_cache_path(cache_key)
-        if not cache_path.exists():
+        # Use in-memory index for fast lookup
+        cache_entry = self._cache_index.get(cache_key)
+        if not cache_entry:
             return None
         
+        # Check if expired (should have been cleaned up already, but double-check)
+        if cache_entry['expired']:
+            return None
+        
+        # Load data from disk
         try:
-            with open(cache_path, 'r') as f:
+            with open(cache_entry['path'], 'r') as f:
                 cached_data = json.load(f)
-            
-            # Check expiry
-            cached_time = datetime.fromisoformat(cached_data['timestamp'])
-            if datetime.now() - cached_time > timedelta(days=self.CACHE_EXPIRY_DAYS):
-                cache_path.unlink()  # Delete expired cache
-                return None
             
             logger.debug(f"Cache hit for {cache_key}")
             return cached_data['data']
         except Exception as e:
             logger.warning(f"Failed to load cache for {cache_key}: {e}")
+            # Remove from index if file is corrupted
+            if cache_key in self._cache_index:
+                del self._cache_index[cache_key]
             return None
     
+    def has_cached_album(self, artist: str, album: str, year: Optional[int] = None) -> bool:
+        """Check if album info is already cached without making an API call"""
+        if not self.cache_enabled:
+            return False
+        
+        cache_key = f"search_{artist}_{album}_{year or ''}"
+        
+        # Use in-memory index for instant lookup
+        cache_entry = self._cache_index.get(cache_key)
+        if not cache_entry:
+            return False
+        
+        # Check if expired (should have been cleaned up, but double-check)
+        return not cache_entry['expired']
+    
     def _save_to_cache(self, cache_key: str, data: Dict):
-        """Save data to cache"""
+        """Save data to cache and update in-memory index"""
         if not self.cache_enabled:
             return
         
         cache_path = self._get_cache_path(cache_key)
+        timestamp = datetime.now()
+        
         try:
             cache_data = {
-                'timestamp': datetime.now().isoformat(),
+                'timestamp': timestamp.isoformat(),
+                'cache_key': cache_key,  # Store original key for index loading
                 'data': data
             }
             with open(cache_path, 'w') as f:
                 json.dump(cache_data, f, indent=2)
+            
+            # Update in-memory index
+            hash_key = hashlib.md5(cache_key.encode()).hexdigest()
+            self._cache_index[cache_key] = {
+                'timestamp': timestamp,
+                'path': cache_path,
+                'expired': False,
+                'hash_key': hash_key
+            }
+            self._hash_to_key[hash_key] = cache_key
+            
             logger.debug(f"Cached data for {cache_key}")
         except Exception as e:
             logger.warning(f"Failed to cache data for {cache_key}: {e}")
@@ -497,6 +622,8 @@ class MusicBrainzClient:
             if stored_data:
                 fingerprint, acoustid_id = stored_data
                 
+                # Note: acoustid_id could be used for direct AcoustID lookups in future
+                # For now, we use the fingerprint for lookups
                 # If we have the fingerprint, we need duration for the API call
                 # Try to get duration from the file
                 if fingerprint and HAS_ACOUSTID and self.acoustid_api_key:
@@ -546,9 +673,144 @@ class MusicBrainzClient:
         
         return None
     
+    def get_cache_stats(self) -> Dict[str, int]:
+        """Get cache statistics for monitoring"""
+        if not self.cache_enabled:
+            return {"total": 0, "valid": 0, "expired": 0}
+        
+        total = len(self._cache_index)
+        expired = sum(1 for entry in self._cache_index.values() if entry['expired'])
+        valid = total - expired
+        
+        return {
+            "total": total,
+            "valid": valid,
+            "expired": expired
+        }
+    
+    def batch_load_cached_albums(self, album_requests: List[Tuple[str, str, Optional[int]]]) -> Dict[str, AlbumInfo]:
+        """Load multiple cached albums efficiently in one batch.
+        
+        Args:
+            album_requests: List of (artist, album, year) tuples
+            
+        Returns:
+            Dictionary mapping 'artist - album' keys to AlbumInfo objects
+        """
+        if not self.cache_enabled:
+            return {}
+        
+        results = {}
+        
+        for artist, album, year in album_requests:
+            cache_key = f"search_{artist}_{album}_{year or ''}"
+            
+            # Check in-memory index first
+            if cache_key not in self._cache_index or self._cache_index[cache_key]['expired']:
+                continue
+                
+            # Load from cache
+            cached_data = self._load_from_cache(cache_key)
+            if cached_data and isinstance(cached_data, list) and len(cached_data) > 0:
+                # Select the best release from the results
+                # Prefer: Album > EP > Single, and prefer releases with more tracks
+                best_release = None
+                best_score = -1
+                
+                for release in cached_data[:10]:  # Check first 10 results
+                    score = 0
+                    
+                    # Score by release type
+                    release_group = release.get('release-group', {})
+                    primary_type = release_group.get('primary-type', '').lower()
+                    if primary_type == 'album':
+                        score += 100
+                    elif primary_type == 'ep':
+                        score += 50
+                    elif primary_type == 'single':
+                        score += 10
+                    
+                    # Score by track count (from media)
+                    media_list = release.get('medium-list', [])
+                    if media_list:
+                        total_tracks = sum(m.get('track-count', 0) for m in media_list)
+                        score += min(total_tracks, 30)  # Cap at 30 to avoid huge compilations
+                    
+                    # Prefer official releases
+                    if release.get('status') == 'Official':
+                        score += 20
+                    
+                    if score > best_score:
+                        best_score = score
+                        best_release = release
+                
+                # Use the best release found
+                first_release = best_release if best_release else cached_data[0]
+                
+                # Get track count from media list if not in track-count field
+                track_count = first_release.get('track-count', 0)
+                if track_count == 0:
+                    # Try to get from media list
+                    media_list = first_release.get('medium-list', [])
+                    if media_list:
+                        track_count = sum(m.get('track-count', 0) for m in media_list)
+                
+                # If we have a valid track count from search, use it
+                # Otherwise, we'll need to fetch full release info (but that's slow)
+                # For now, just mark it as unknown (0) and let the main code handle it
+                
+                # Store the release ID so we can fetch track list later if needed
+                # We'll only fetch the full track list when actually displaying missing tracks
+                # to avoid unnecessary API calls
+                track_list = []
+                
+                # But if we already have the release cached, use it
+                release_id = first_release.get('id', '')
+                if release_id:
+                    release_cache_key = f"release_{release_id}"
+                    if release_cache_key in self._cache_index and not self._cache_index[release_cache_key]['expired']:
+                        # We have cached release data, extract track list
+                        release_data = self._load_from_cache(release_cache_key)
+                        if release_data and 'media' in release_data:
+                            for medium in release_data['media']:
+                                for track in medium.get('tracks', []):
+                                    track_list.append({
+                                        'title': track.get('title', ''),
+                                        'position': track.get('position', 0),
+                                        'length': track.get('length'),
+                                        'number': track.get('number', '')
+                                    })
+                            # Update track count from actual track list if it was 0
+                            if track_count == 0 and track_list:
+                                track_count = len(track_list)
+                
+                album_info = AlbumInfo(
+                    artist=artist,
+                    title=first_release.get('title', album),
+                    release_id=first_release.get('id', ''),
+                    total_tracks=track_count,  # May be 0 if not in search results
+                    track_list=track_list,  # Now includes actual track titles when available
+                    release_date=first_release.get('date'),
+                    release_group_id=first_release.get('release-group', {}).get('id') if isinstance(first_release.get('release-group'), dict) else None,
+                    disc_count=first_release.get('medium-count', 1),
+                    confidence=0.9 if track_count > 0 else 0.5,  # Lower confidence if no track count
+                    source='cache-batch'
+                )
+                
+                # Use consistent key format
+                result_key = f"{artist} - {album}"
+                results[result_key] = album_info
+        
+        return results
+    
     def clear_cache(self):
-        """Clear all cached data"""
+        """Clear all cached data and in-memory index"""
         if self.CACHE_DIR.exists():
             for cache_file in self.CACHE_DIR.glob("*.json"):
                 cache_file.unlink()
-            logger.info("Cleared MusicBrainz cache")
+        
+        # Clear in-memory index
+        self._cache_index.clear()
+        self._hash_to_key.clear()
+        
+        logger.info("Cleared MusicBrainz cache and index")

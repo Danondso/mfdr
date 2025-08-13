@@ -130,57 +130,6 @@ def check_track_exists(persistent_id: str) -> Tuple[bool, Optional[str]]:
         return False, str(e)
 
 
-def export_library_xml(output_path: Path, overwrite: bool = False) -> Tuple[bool, Optional[str]]:
-    """
-    Export Library.xml from Apple Music - simplified approach.
-    
-    Since AppleScript UI automation is unreliable across macOS versions,
-    this function now just provides instructions for manual export.
-    
-    Args:
-        output_path: Path where the Library.xml should be saved
-        overwrite: Whether to overwrite existing file
-        
-    Returns:
-        Tuple of (success: bool, error_message: Optional[str])
-    """
-    # Check if we can find an existing Library.xml in common locations
-    common_locations = [
-        Path.home() / "Music" / "Library.xml",
-        Path.home() / "Music" / "iTunes" / "Library.xml",
-        Path.home() / "Documents" / "Library.xml",
-        Path.home() / "Desktop" / "Library.xml",
-        Path.cwd() / "Library.xml",
-    ]
-    
-    for location in common_locations:
-        if location.exists():
-            # Found an existing Library.xml, use it
-            if location != output_path:
-                import shutil
-                try:
-                    if output_path.exists() and not overwrite:
-                        return False, f"File already exists: {output_path}. Use --overwrite to replace."
-                    shutil.copy2(location, output_path)
-                    logger.info(f"Found existing Library.xml at {location}, copied to {output_path}")
-                    return True, None
-                except Exception as e:
-                    return False, f"Failed to copy existing Library.xml: {e}"
-            else:
-                return True, None  # Already at desired location
-    
-    # No existing Library.xml found, provide instructions
-    instructions = """
-No existing Library.xml found. Please export manually:
-
-1. Open Apple Music
-2. Go to File → Library → Export Library...
-3. Save as 'Library.xml' in your current directory or Desktop
-4. Run the command again
-
-Alternatively, specify the path to an existing Library.xml file."""
-    
-    return False, instructions
 
 
 def is_music_app_available() -> bool:

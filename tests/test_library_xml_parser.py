@@ -7,7 +7,7 @@ from pathlib import Path
 from unittest.mock import patch, MagicMock, mock_open
 import xml.etree.ElementTree as ET
 
-from mfdr.library_xml_parser import LibraryXMLParser, LibraryTrack
+from mfdr.utils.library_xml_parser import LibraryXMLParser, LibraryTrack
 
 
 class TestLibraryTrack:

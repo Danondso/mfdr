@@ -10,71 +10,12 @@ import json
 import subprocess
 
 from mfdr.main import cli
+from mfdr.services.xml_scanner import LibraryXMLParser
 
 
 class TestMainComprehensive:
     """Comprehensive tests for main.py CLI commands"""
     
-    # Test export command
-    def test_export_command_success(self, tmp_path):
-        """Test export command successful execution"""
-        runner = CliRunner()
-        output_file = tmp_path / "Library.xml"
-        
-        # Patch both functions where they are imported from
-        with patch('mfdr.apple_music.is_music_app_available') as mock_available:
-            mock_available.return_value = True
-            with patch('mfdr.apple_music.export_library_xml') as mock_export:
-                mock_export.return_value = (True, None)
-                
-                result = runner.invoke(cli, ['export', str(output_file)])
-                assert result.exit_code == 0
-                mock_export.assert_called_once()
-    
-    def test_export_command_with_overwrite(self, tmp_path):
-        """Test export command with overwrite flag"""
-        runner = CliRunner()
-        output_file = tmp_path / "Library.xml"
-        output_file.write_text("existing content")
-        
-        with patch('mfdr.apple_music.is_music_app_available') as mock_available:
-            mock_available.return_value = True
-            with patch('mfdr.apple_music.export_library_xml') as mock_export:
-                mock_export.return_value = (True, None)
-                
-                result = runner.invoke(cli, ['export', str(output_file), '--overwrite'])
-                assert result.exit_code == 0
-                # Check it was called with the overwrite flag
-                assert mock_export.call_args[0][1] == True  # Second arg is overwrite
-    
-    def test_export_command_failure(self, tmp_path):
-        """Test export command when export fails"""
-        runner = CliRunner()
-        output_file = tmp_path / "Library.xml"
-        
-        with patch('mfdr.apple_music.is_music_app_available') as mock_available:
-            mock_available.return_value = True
-            with patch('mfdr.apple_music.export_library_xml') as mock_export:
-                mock_export.return_value = (False, "Export failed")
-                
-                result = runner.invoke(cli, ['export', str(output_file)])
-                # Export failure might still exit with 0 but show error message
-                assert "failed" in result.output.lower() or "error" in result.output.lower()
-    
-    def test_export_with_open_after(self, tmp_path):
-        """Test export command with open-after flag"""
-        runner = CliRunner()
-        output_file = tmp_path / "Library.xml"
-        
-        with patch('mfdr.apple_music.is_music_app_available') as mock_available:
-            mock_available.return_value = True
-            with patch('mfdr.apple_music.export_library_xml') as mock_export:
-                mock_export.return_value = (True, None)
-                with patch('subprocess.run') as mock_run:
-                    result = runner.invoke(cli, ['export', str(output_file), '--open-after'])
-                    assert result.exit_code == 0
-                    # Should attempt to open Finder
-                    mock_run.assert_called()
     
     # Test sync command error paths
     def test_sync_without_auto_add_dir(self, tmp_path):
@@ -83,7 +24,7 @@ class TestMainComprehensive:
         xml_file = tmp_path / "Library.xml"
         xml_file.write_text('<?xml version="1.0" encoding="UTF-8"?>\n<plist version="1.0"><dict><key>Tracks</key><dict></dict></dict></plist>')
         
-        with patch('mfdr.library_xml_parser.LibraryXMLParser') as mock_parser:
+        with patch('mfdr.services.xml_scanner.LibraryXMLParser') as mock_parser:
             mock_instance = Mock()
             mock_parser.return_value = mock_instance
             mock_instance.parse.return_value = []
@@ -115,7 +56,7 @@ class TestMainComprehensive:
             )
         ]
         
-        with patch('mfdr.library_xml_parser.LibraryXMLParser') as mock_parser:
+        with patch('mfdr.services.xml_scanner.LibraryXMLParser') as mock_parser:
             mock_instance = Mock()
             mock_parser.return_value = mock_instance
             mock_instance.parse.return_value = mock_tracks
@@ -134,14 +75,14 @@ class TestMainComprehensive:
         xml_file = tmp_path / "Library.xml"
         xml_file.write_text('<?xml version="1.0" encoding="UTF-8"?>\n<plist version="1.0"><dict><key>Tracks</key><dict></dict></dict></plist>')
         
-        with patch('mfdr.library_xml_parser.LibraryXMLParser') as mock_parser:
+        with patch('mfdr.services.xml_scanner.LibraryXMLParser') as mock_parser:
             mock_instance = Mock()
             mock_parser.return_value = mock_instance
             mock_instance.parse.return_value = []
             
             result = runner.invoke(cli, ['-v', 'scan', str(xml_file)])
-            # Should work with verbose
-            assert result.exit_code in [0, 1]
+            # Should work with verbose - either succeeds or fails gracefully
+            assert result.exit_code == 0 or (result.exit_code == 1 and "error" in result.output.lower())
     
     def test_scan_with_fast_mode(self, tmp_path):
         """Test scan command with fast mode"""
@@ -156,18 +97,19 @@ class TestMainComprehensive:
             location=str(tmp_path / "song.mp3")
         )
         
-        with patch('mfdr.library_xml_parser.LibraryXMLParser') as mock_parser:
+        with patch('mfdr.services.xml_scanner.LibraryXMLParser') as mock_parser:
             mock_instance = Mock()
             mock_parser.return_value = mock_instance
             mock_instance.parse.return_value = [mock_track]
             
-            with patch('mfdr.completeness_checker.CompletenessChecker') as mock_checker:
+            with patch('mfdr.services.completeness_checker.CompletenessChecker') as mock_checker:
                 checker_instance = Mock()
                 mock_checker.return_value = checker_instance
                 checker_instance.check_file.return_value = (True, {})
                 
                 result = runner.invoke(cli, ['scan', str(xml_file), '--fast'])
-                assert result.exit_code in [0, 1]
+                # Fast scan should succeed when checker returns valid results
+                assert result.exit_code == 0
     
     def test_scan_with_quarantine(self, tmp_path):
         """Test scan command with quarantine flag"""
@@ -177,13 +119,14 @@ class TestMainComprehensive:
         
         quarantine_dir = tmp_path / "quarantine"
         
-        with patch('mfdr.library_xml_parser.LibraryXMLParser') as mock_parser:
+        with patch('mfdr.services.xml_scanner.LibraryXMLParser') as mock_parser:
             mock_instance = Mock()
             mock_parser.return_value = mock_instance
             mock_instance.parse.return_value = []
             
             result = runner.invoke(cli, ['scan', str(xml_file), '--quarantine'])
-            assert result.exit_code in [0, 1]
+            # Quarantine mode should succeed with valid setup
+            assert result.exit_code == 0
     
     def test_scan_directory_mode(self, tmp_path):
         """Test scan command in directory mode"""
@@ -195,13 +138,14 @@ class TestMainComprehensive:
         (music_dir / "song1.mp3").touch()
         (music_dir / "song2.m4a").touch()
         
-        with patch('mfdr.simple_file_search.SimpleFileSearch') as mock_search:
+        with patch('mfdr.services.simple_file_search.SimpleFileSearch') as mock_search:
             mock_instance = Mock()
             mock_search.return_value = mock_instance
             mock_instance.search_directory.return_value = []
             
             result = runner.invoke(cli, ['scan', str(music_dir), '--mode', 'dir'])
-            assert result.exit_code in [0, 1]
+            # Directory scan should succeed when search returns empty results
+            assert result.exit_code == 0
     
     def test_scan_with_auto_replace(self, tmp_path):
         """Test scan command with auto-replace option"""
@@ -217,17 +161,18 @@ class TestMainComprehensive:
             persistent_id="ID1"
         )
         
-        with patch('mfdr.library_xml_parser.LibraryXMLParser') as mock_parser:
+        with patch('mfdr.services.xml_scanner.LibraryXMLParser') as mock_parser:
             mock_instance = Mock()
             mock_parser.return_value = mock_instance
             mock_instance.parse.return_value = [mock_track]
+            mock_instance.music_folder = Path("/Music")  # Fix: Add missing music_folder
             
-            with patch('mfdr.simple_file_search.SimpleFileSearch'):
-                with patch('mfdr.track_matcher.TrackMatcher'):
+            with patch('mfdr.services.simple_file_search.SimpleFileSearch'):
+                with patch('mfdr.services.track_matcher.TrackMatcher'):
                     # Just test that auto-replace flag is accepted
-                    result = runner.invoke(cli, ['scan', str(xml_file), '--auto-replace'])
-                    # May exit with various codes depending on the path taken
-                    assert result.exit_code in [0, 1, 2]
+                    result = runner.invoke(cli, ['scan', str(xml_file), '--replace'])
+                    # Auto-replace should succeed with mocked services
+                    assert result.exit_code == 0
     
     def test_scan_with_m3u_creation(self, tmp_path):
         """Test scan command with M3U playlist creation"""
@@ -243,15 +188,18 @@ class TestMainComprehensive:
             persistent_id="ID1"
         )
         
-        with patch('mfdr.library_xml_parser.LibraryXMLParser') as mock_parser:
+        with patch('mfdr.services.xml_scanner.LibraryXMLParser') as mock_parser:
             mock_instance = Mock()
             mock_parser.return_value = mock_instance
             mock_instance.parse.return_value = [mock_track]
+            mock_instance.music_folder = Path("/Music")  # Fix: Add missing music_folder
             
-            with patch('mfdr.simple_file_search.SimpleFileSearch'):
+            with patch('mfdr.services.simple_file_search.SimpleFileSearch'):
                 result = runner.invoke(cli, ['scan', str(xml_file)])
-                assert result.exit_code in [0, 1]
-                # Should create M3U playlist for missing tracks
+                # Should succeed - tracks processed successfully
+                assert result.exit_code == 0
+                # Should show scan completed successfully
+                assert "scan summary" in result.output.lower()
     
     # Test knit command
     def test_knit_basic(self, tmp_path):
@@ -266,7 +214,7 @@ class TestMainComprehensive:
             Mock(name="Track 3", artist="Artist", album="Album", track_number=3, disc_number=1, location="/path/3.mp3"),
         ]
         
-        with patch('mfdr.library_xml_parser.LibraryXMLParser') as mock_parser:
+        with patch('mfdr.services.xml_scanner.LibraryXMLParser') as mock_parser:
             mock_instance = Mock()
             mock_parser.return_value = mock_instance
             mock_instance.parse.return_value = mock_tracks
@@ -286,7 +234,7 @@ class TestMainComprehensive:
             for i in range(1, 5)
         ]
         
-        with patch('mfdr.library_xml_parser.LibraryXMLParser') as mock_parser:
+        with patch('mfdr.services.xml_scanner.LibraryXMLParser') as mock_parser:
             mock_instance = Mock()
             mock_parser.return_value = mock_instance
             mock_instance.parse.return_value = mock_tracks
@@ -305,7 +253,7 @@ class TestMainComprehensive:
             for i in range(1, 3)  # Only 2 tracks out of expected more
         ]
         
-        with patch('mfdr.library_xml_parser.LibraryXMLParser') as mock_parser:
+        with patch('mfdr.services.xml_scanner.LibraryXMLParser') as mock_parser:
             mock_instance = Mock()
             mock_parser.return_value = mock_instance
             mock_instance.parse.return_value = mock_tracks
@@ -324,7 +272,7 @@ class TestMainComprehensive:
             Mock(name="Track 1", artist="Artist", album="Album 2", track_number=1, disc_number=1, location="/path/2.mp3"),
         ]
         
-        with patch('mfdr.library_xml_parser.LibraryXMLParser') as mock_parser:
+        with patch('mfdr.services.xml_scanner.LibraryXMLParser') as mock_parser:
             mock_instance = Mock()
             mock_parser.return_value = mock_instance
             mock_instance.parse.return_value = mock_tracks
@@ -343,7 +291,7 @@ class TestMainComprehensive:
             Mock(name="Track", artist="Artist", album="Album", track_number=1, disc_number=1, location="/path/1.mp3")
         ]
         
-        with patch('mfdr.library_xml_parser.LibraryXMLParser') as mock_parser:
+        with patch('mfdr.services.xml_scanner.LibraryXMLParser') as mock_parser:
             mock_instance = Mock()
             mock_parser.return_value = mock_instance
             mock_instance.parse.return_value = mock_tracks
@@ -364,8 +312,9 @@ class TestMainComprehensive:
         xml_file.write_text("Not valid XML")
         
         result = runner.invoke(cli, ['scan', str(xml_file)])
+        # Invalid XML should result in error
         assert result.exit_code == 1
-        assert "error" in result.output.lower() or "invalid" in result.output.lower()
+        assert "xml" in result.output.lower() or "parse" in result.output.lower() or "invalid" in result.output.lower()
     
     def test_scan_with_permission_error(self, tmp_path):
         """Test scan command with permission error"""
@@ -373,12 +322,14 @@ class TestMainComprehensive:
         xml_file = tmp_path / "Library.xml"
         xml_file.write_text('<?xml version="1.0" encoding="UTF-8"?>\n<plist version="1.0"><dict><key>Tracks</key><dict></dict></dict></plist>')
         
-        with patch('mfdr.library_xml_parser.LibraryXMLParser') as mock_parser:
+        with patch('mfdr.services.xml_scanner.LibraryXMLParser') as mock_parser:
             mock_parser.side_effect = PermissionError("Access denied")
             
             result = runner.invoke(cli, ['scan', str(xml_file)])
-            # Permission error is caught and handled
-            assert result.exit_code in [0, 1]
+            # Permission error should be handled with error exit code
+            assert result.exit_code == 1
+            # Command should complete with CLI framework handling the exception
+            assert result.exception is not None
     
     def test_sync_with_copy_error(self, tmp_path):
         """Test sync command when file copy fails"""
@@ -398,7 +349,7 @@ class TestMainComprehensive:
             size=1000000
         )
         
-        with patch('mfdr.library_xml_parser.LibraryXMLParser') as mock_parser:
+        with patch('mfdr.services.xml_scanner.LibraryXMLParser') as mock_parser:
             mock_instance = Mock()
             mock_parser.return_value = mock_instance
             mock_instance.parse.return_value = [mock_track]
@@ -408,8 +359,8 @@ class TestMainComprehensive:
                 with patch('shutil.copy2', side_effect=IOError("Copy failed")):
                     result = runner.invoke(cli, ['sync', str(xml_file), 
                                                  '--auto-add-dir', str(auto_add_dir)])
-                    # Should handle error gracefully
-                    assert result.exit_code in [0, 1]
+                    # Copy error should be handled gracefully - may succeed despite errors
+                    assert result.exit_code == 0 or (result.exit_code == 1 and "copy" in result.output.lower())
     
     # Test CLI options combinations
     def test_scan_with_multiple_options(self, tmp_path):
@@ -418,14 +369,17 @@ class TestMainComprehensive:
         xml_file = tmp_path / "Library.xml"
         xml_file.write_text('<?xml version="1.0" encoding="UTF-8"?>\n<plist version="1.0"><dict><key>Tracks</key><dict></dict></dict></plist>')
         
-        with patch('mfdr.library_xml_parser.LibraryXMLParser') as mock_parser:
+        with patch('mfdr.services.xml_scanner.LibraryXMLParser') as mock_parser:
             mock_instance = Mock()
             mock_parser.return_value = mock_instance
             mock_instance.parse.return_value = []
             
             result = runner.invoke(cli, ['scan', str(xml_file), 
                                         '--fast', '--dry-run', '--limit', '10'])
-            assert result.exit_code in [0, 1]
+            # Multiple options should work together successfully
+            assert result.exit_code == 0
+            # Dry run should mention it's a dry run
+            assert "dry" in result.output.lower() or "would" in result.output.lower()
     
     def test_help_command(self):
         """Test help command"""
@@ -439,7 +393,7 @@ class TestMainComprehensive:
         """Test individual command help"""
         runner = CliRunner()
         
-        for command in ['scan', 'export', 'sync', 'knit']:
+        for command in ['scan', 'sync', 'knit']:
             result = runner.invoke(cli, [command, '--help'])
             assert result.exit_code == 0
             assert "Usage:" in result.output
