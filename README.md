@@ -61,34 +61,6 @@ To export Library.xml from Apple Music: **File → Library → Export Library...
 
 ## Commands
 
-### `export` - Automated Library Export
-
-Automatically exports Library.xml from Apple Music using UI automation.
-
-```bash
-./venv/bin/python -m mfdr export [OUTPUT_PATH] [OPTIONS]
-```
-
-**Options:**
-- `--overwrite` - Replace existing file
-- `--open-after` - Open Finder to show the exported file
-
-**Examples:**
-```bash
-# Export to current directory as Library.xml
-./venv/bin/python -m mfdr export
-
-# Export to specific location
-./venv/bin/python -m mfdr export ~/Desktop/MyLibrary.xml
-
-# Overwrite existing and open in Finder
-./venv/bin/python -m mfdr export ~/Desktop/Library.xml --overwrite --open-after
-```
-
-**Note:** Requires accessibility permissions for Terminal. The first time you run this:
-1. macOS will prompt for accessibility permissions
-2. Grant Terminal access in System Preferences > Security & Privacy > Accessibility
-3. Restart Terminal and run the command again
 
 ### `scan` - Universal Scanner
 

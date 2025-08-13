@@ -92,20 +92,6 @@ class TestCLICommands:
             
             assert result.exit_code == 0
     
-    def test_export_basic(self, tmp_path):
-        """Test basic export command"""
-        runner = CliRunner()
-        output_file = tmp_path / "export.xml"
-        
-        with patch('mfdr.apple_music.is_music_app_available') as mock_available:
-            with patch('mfdr.apple_music.export_library_xml') as mock_export:
-                mock_available.return_value = True
-                mock_export.return_value = (True, None)
-                
-                result = runner.invoke(cli, ['export', str(output_file)])
-                
-                # Export command should succeed
-                assert result.exit_code == 0
     
     def test_knit_basic(self, tmp_path):
         """Test basic knit command"""

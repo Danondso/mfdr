@@ -12,7 +12,7 @@ import tempfile
 
 from mfdr.apple_music import (
     check_track_exists, delete_tracks_by_id, 
-    is_music_app_available, export_library_xml
+    is_music_app_available
 )
 from mfdr.utils.library_xml_parser import LibraryTrack
 
@@ -119,41 +119,6 @@ class TestAppleMusicIntegration:
             available = is_music_app_available()
             assert available is False
     
-    # ============= LIBRARY EXPORT TESTS =============
-    
-    def test_export_library_success(self, tmp_path):
-        """Test successful library export"""
-        output_file = tmp_path / "Library.xml"
-        
-        with patch('subprocess.run') as mock_run:
-            mock_run.return_value = Mock(returncode=0, stdout="", stderr="")
-            
-            success, error = export_library_xml(output_file)
-            assert success is True
-            assert error is None
-    
-    def test_export_library_failure(self, tmp_path):
-        """Test failed library export"""
-        # Use a unique output name that won't match any existing files
-        output_file = tmp_path / "NonExistentSubdir" / "Library.xml"
-        
-        # The new export_library_xml doesn't use subprocess for UI automation,
-        # it searches for existing files. When no files exist, it returns instructions.
-        success, error = export_library_xml(output_file)
-        assert success is False
-        assert error is not None  # Will contain manual export instructions
-    
-    def test_export_library_with_overwrite(self, tmp_path):
-        """Test library export with overwrite"""
-        output_file = tmp_path / "Library.xml"
-        output_file.write_text("existing")
-        
-        with patch('subprocess.run') as mock_run:
-            mock_run.return_value = Mock(returncode=0, stdout="", stderr="")
-            
-            success, error = export_library_xml(output_file, overwrite=True)
-            assert success is True
-            assert error is None
     
     # ============= APPLE MUSIC LIBRARY CLASS TESTS =============
     # Note: AppleMusicLibrary class was removed in refactor
