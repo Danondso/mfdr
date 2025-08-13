@@ -16,6 +16,7 @@ dependencies = [
     "rich>=13.0.0",
     "musicbrainzngs>=0.7.1",
     "pyacoustid>=1.2.2",
+    "requests>=2.25.0",
 ]
 
 [project.optional-dependencies]
