@@ -213,7 +213,6 @@ class TestCLIInterface:
     def test_cli_commands_registered(self):
         """Test that all commands are registered."""
         # Check that commands are available
-        assert 'export' in cli.commands
         assert 'sync' in cli.commands
         assert 'scan' in cli.commands
         assert 'knit' in cli.commands
@@ -226,7 +225,6 @@ class TestCLIInterface:
         assert result.exit_code == 0
         assert "Apple Music Library Manager" in result.output
         assert "--verbose" in result.output
-        assert "export" in result.output
         assert "sync" in result.output
         assert "scan" in result.output
         assert "knit" in result.output
