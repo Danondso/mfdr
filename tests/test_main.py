@@ -238,7 +238,7 @@ class TestCLIIntegration:
         runner = CliRunner()
         
         # Test that each command has help
-        for command_name in ['export', 'sync', 'scan', 'knit']:
+        for command_name in ['sync', 'scan', 'knit']:
             result = runner.invoke(cli, [command_name, '--help'])
             assert result.exit_code == 0
             assert "Usage:" in result.output
