@@ -141,8 +141,8 @@ class TestMainComprehensive:
             mock_instance.parse.return_value = []
             
             result = runner.invoke(cli, ['-v', 'scan', str(xml_file)])
-            # Should work with verbose
-            assert result.exit_code in [0, 1]
+            # Should work with verbose - either succeeds or fails gracefully
+            assert result.exit_code == 0 or (result.exit_code == 1 and "error" in result.output.lower())
     
     def test_scan_with_fast_mode(self, tmp_path):
         """Test scan command with fast mode"""
@@ -168,7 +168,8 @@ class TestMainComprehensive:
                 checker_instance.check_file.return_value = (True, {})
                 
                 result = runner.invoke(cli, ['scan', str(xml_file), '--fast'])
-                assert result.exit_code in [0, 1]
+                # Fast scan should succeed when checker returns valid results
+                assert result.exit_code == 0
     
     def test_scan_with_quarantine(self, tmp_path):
         """Test scan command with quarantine flag"""
@@ -184,7 +185,8 @@ class TestMainComprehensive:
             mock_instance.parse.return_value = []
             
             result = runner.invoke(cli, ['scan', str(xml_file), '--quarantine'])
-            assert result.exit_code in [0, 1]
+            # Quarantine mode should succeed with valid setup
+            assert result.exit_code == 0
     
     def test_scan_directory_mode(self, tmp_path):
         """Test scan command in directory mode"""
@@ -202,7 +204,8 @@ class TestMainComprehensive:
             mock_instance.search_directory.return_value = []
             
             result = runner.invoke(cli, ['scan', str(music_dir), '--mode', 'dir'])
-            assert result.exit_code in [0, 1]
+            # Directory scan should succeed when search returns empty results
+            assert result.exit_code == 0
     
     def test_scan_with_auto_replace(self, tmp_path):
         """Test scan command with auto-replace option"""
@@ -222,13 +225,14 @@ class TestMainComprehensive:
             mock_instance = Mock()
             mock_parser.return_value = mock_instance
             mock_instance.parse.return_value = [mock_track]
+            mock_instance.music_folder = Path("/Music")  # Fix: Add missing music_folder
             
             with patch('mfdr.services.simple_file_search.SimpleFileSearch'):
                 with patch('mfdr.services.track_matcher.TrackMatcher'):
                     # Just test that auto-replace flag is accepted
                     result = runner.invoke(cli, ['scan', str(xml_file), '--replace'])
-                    # May exit with various codes depending on the path taken
-                    assert result.exit_code in [0, 1, 2]
+                    # Auto-replace should succeed with mocked services
+                    assert result.exit_code == 0
     
     def test_scan_with_m3u_creation(self, tmp_path):
         """Test scan command with M3U playlist creation"""
@@ -248,11 +252,14 @@ class TestMainComprehensive:
             mock_instance = Mock()
             mock_parser.return_value = mock_instance
             mock_instance.parse.return_value = [mock_track]
+            mock_instance.music_folder = Path("/Music")  # Fix: Add missing music_folder
             
             with patch('mfdr.services.simple_file_search.SimpleFileSearch'):
                 result = runner.invoke(cli, ['scan', str(xml_file)])
-                assert result.exit_code in [0, 1]
-                # Should create M3U playlist for missing tracks
+                # Should succeed - tracks processed successfully
+                assert result.exit_code == 0
+                # Should show scan completed successfully
+                assert "scan summary" in result.output.lower()
     
     # Test knit command
     def test_knit_basic(self, tmp_path):
@@ -365,9 +372,9 @@ class TestMainComprehensive:
         xml_file.write_text("Not valid XML")
         
         result = runner.invoke(cli, ['scan', str(xml_file)])
-        # Invalid XML might be handled gracefully in refactored code
-        assert result.exit_code in [0, 1]
-        # Error message format may vary
+        # Invalid XML should result in error
+        assert result.exit_code == 1
+        assert "xml" in result.output.lower() or "parse" in result.output.lower() or "invalid" in result.output.lower()
     
     def test_scan_with_permission_error(self, tmp_path):
         """Test scan command with permission error"""
@@ -379,8 +386,10 @@ class TestMainComprehensive:
             mock_parser.side_effect = PermissionError("Access denied")
             
             result = runner.invoke(cli, ['scan', str(xml_file)])
-            # Permission error is caught and handled
-            assert result.exit_code in [0, 1]
+            # Permission error should be handled with error exit code
+            assert result.exit_code == 1
+            # Command should complete with CLI framework handling the exception
+            assert result.exception is not None
     
     def test_sync_with_copy_error(self, tmp_path):
         """Test sync command when file copy fails"""
@@ -410,8 +419,8 @@ class TestMainComprehensive:
                 with patch('shutil.copy2', side_effect=IOError("Copy failed")):
                     result = runner.invoke(cli, ['sync', str(xml_file), 
                                                  '--auto-add-dir', str(auto_add_dir)])
-                    # Should handle error gracefully
-                    assert result.exit_code in [0, 1]
+                    # Copy error should be handled gracefully - may succeed despite errors
+                    assert result.exit_code == 0 or (result.exit_code == 1 and "copy" in result.output.lower())
     
     # Test CLI options combinations
     def test_scan_with_multiple_options(self, tmp_path):
@@ -427,7 +436,10 @@ class TestMainComprehensive:
             
             result = runner.invoke(cli, ['scan', str(xml_file), 
                                         '--fast', '--dry-run', '--limit', '10'])
-            assert result.exit_code in [0, 1]
+            # Multiple options should work together successfully
+            assert result.exit_code == 0
+            # Dry run should mention it's a dry run
+            assert "dry" in result.output.lower() or "would" in result.output.lower()
     
     def test_help_command(self):
         """Test help command"""

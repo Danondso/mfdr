@@ -70,12 +70,7 @@ class ScanService:
         for search_dir in search_dirs:
             if search_dir and search_dir.exists():
                 try:
-                    dir_candidates = self.file_manager.find_candidates(
-                        track_name=track.name,
-                        artist=track.artist,
-                        album=track.album,
-                        search_dir=search_dir
-                    )
+                    dir_candidates = self.file_manager.search_files(track)
                     candidates.extend(dir_candidates)
                 except Exception as e:
                     logger.error(f"Error searching {search_dir}: {e}")
@@ -83,17 +78,15 @@ class ScanService:
         if not candidates:
             return None
             
-        # Score and sort candidates
-        scored_candidates = []
-        for candidate in candidates:
-            score = self.track_matcher.score_candidate(track, candidate)
-            scored_candidates.append((score, candidate))
-            
-        scored_candidates.sort(key=lambda x: x[0], reverse=True)
+        # Score and sort candidates using TrackMatcher's method
+        scored_candidates = self.track_matcher.get_match_candidates_with_scores(track, candidates)
+        
+        # Sort by score (highest first)
+        scored_candidates.sort(key=lambda x: x[1], reverse=True)
         
         # Return best if above threshold
-        if scored_candidates and scored_candidates[0][0] >= auto_accept_threshold:
-            return scored_candidates[0][1]
+        if scored_candidates and scored_candidates[0][1] >= auto_accept_threshold:
+            return scored_candidates[0][0]  # Return FileCandidate
             
         return None
     
@@ -113,7 +106,7 @@ class ScanService:
         if fast_mode:
             return self.checker.fast_corruption_check(file_path)
         else:
-            return self.checker.check_audio_integrity(file_path)
+            return self.checker.check_file(file_path)
     
     def quarantine_file(self, 
                        file_path: Path, 

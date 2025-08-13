@@ -1,12 +1,13 @@
 """Tests for the consolidated XML-based scan command"""
 import pytest
 from pathlib import Path
-from unittest.mock import MagicMock, patch, call
+from unittest.mock import MagicMock, patch, call, Mock
 from click.testing import CliRunner
 import json
 
 from mfdr.main import cli
 from mfdr.utils.library_xml_parser import LibraryTrack
+from mfdr.services.xml_scanner import XMLScannerService
 
 
 class TestXMLScan:
@@ -388,3 +389,134 @@ class TestXMLScan:
                 
                 # Tips might not always be shown
                 assert result.exit_code == 0
+
+
+class TestXMLScannerService:
+    """Test XMLScannerService methods directly."""
+    
+    def test_detect_auto_add_dir_music_localized(self, tmp_path):
+        """Test detecting auto-add directory with Music.localized."""
+        scanner = XMLScannerService()
+        
+        # Create mock parser with music_folder
+        mock_parser = Mock()
+        mock_parser.music_folder = tmp_path / "Music"
+        
+        # Create the auto-add directory
+        auto_add_dir = tmp_path / "Music" / "Automatically Add to Music.localized"
+        auto_add_dir.mkdir(parents=True)
+        
+        xml_path = tmp_path / "Library.xml"
+        result = scanner._detect_auto_add_dir(mock_parser, xml_path)
+        
+        assert result == auto_add_dir
+    
+    def test_detect_auto_add_dir_itunes_localized(self, tmp_path):
+        """Test detecting auto-add directory with iTunes.localized."""
+        scanner = XMLScannerService()
+        
+        mock_parser = Mock()
+        mock_parser.music_folder = tmp_path / "iTunes"
+        
+        # Create the auto-add directory with iTunes name
+        auto_add_dir = tmp_path / "iTunes" / "Automatically Add to iTunes.localized"
+        auto_add_dir.mkdir(parents=True)
+        
+        xml_path = tmp_path / "Library.xml"
+        result = scanner._detect_auto_add_dir(mock_parser, xml_path)
+        
+        assert result == auto_add_dir
+    
+    def test_detect_auto_add_dir_parent_directory(self, tmp_path):
+        """Test detecting auto-add directory in parent directory."""
+        scanner = XMLScannerService()
+        
+        mock_parser = Mock()
+        mock_parser.music_folder = tmp_path / "Music"
+        
+        # Create auto-add directory in parent
+        auto_add_dir = tmp_path / "Automatically Add to Music.localized"
+        auto_add_dir.mkdir(parents=True)
+        
+        xml_path = tmp_path / "Library.xml"
+        result = scanner._detect_auto_add_dir(mock_parser, xml_path)
+        
+        assert result == auto_add_dir
+    
+    def test_detect_auto_add_dir_none_found(self, tmp_path):
+        """Test when no auto-add directory is found."""
+        scanner = XMLScannerService()
+        
+        mock_parser = Mock()
+        mock_parser.music_folder = tmp_path / "Music"
+        
+        xml_path = tmp_path / "Library.xml"
+        result = scanner._detect_auto_add_dir(mock_parser, xml_path)
+        
+        assert result is None
+    
+    def test_detect_auto_add_dir_fallback_to_xml_parent(self, tmp_path):
+        """Test fallback when parser.music_folder is None."""
+        scanner = XMLScannerService()
+        
+        mock_parser = Mock()
+        mock_parser.music_folder = None
+        
+        # Create auto-add directory relative to XML file
+        auto_add_dir = tmp_path / "Automatically Add to Music.localized"
+        auto_add_dir.mkdir(parents=True)
+        
+        xml_path = tmp_path / "Library.xml"
+        result = scanner._detect_auto_add_dir(mock_parser, xml_path)
+        
+        assert result == auto_add_dir
+    
+    def test_display_summary_with_stats(self):
+        """Test display_summary with various stats."""
+        scanner = XMLScannerService(console=Mock())
+        
+        # Set up some test stats
+        scanner.stats['missing'] = 5
+        scanner.stats['good'] = 10
+        scanner.stats['corrupted'] = 2
+        scanner.stats['replaced'] = 1
+        scanner.stats['quarantined'] = 2
+        scanner.removed_tracks = ['track1', 'track2']
+        
+        with patch('mfdr.services.xml_scanner.create_summary_table') as mock_create_table:
+            mock_table = Mock()
+            mock_create_table.return_value = mock_table
+            
+            scanner.display_summary()
+            
+            # Should call create_summary_table with correct data
+            mock_create_table.assert_called_once()
+            args, kwargs = mock_create_table.call_args
+            
+            assert args[0] == "Scan Summary"
+            summary_data = args[1]
+            
+            # Check that all expected metrics are included
+            metric_names = [item[0] for item in summary_data]
+            assert "Total Tracks" in metric_names
+            assert "Missing Tracks" in metric_names
+            assert "Corrupted Tracks" in metric_names
+            assert "Replaced" in metric_names
+            assert "Removed" in metric_names
+            assert "Quarantined" in metric_names
+            
+            # Should print the table
+            scanner.console.print.assert_called_with(mock_table)
+    
+    def test_display_summary_empty_stats(self):
+        """Test display_summary with no stats."""
+        scanner = XMLScannerService(console=Mock())
+        
+        with patch('mfdr.services.xml_scanner.create_summary_table') as mock_create_table:
+            mock_create_table.return_value = Mock()
+            
+            scanner.display_summary()
+            
+            # Should still call create_summary_table with zeros
+            mock_create_table.assert_called_once()
+            scanner.console.print.assert_called()
