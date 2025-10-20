@@ -75,7 +75,7 @@ jobs:
           echo "semgrep_exit_code=$?" >> $GITHUB_OUTPUT
 
       - name: Check for secrets with TruffleHog
-        uses: trufflesecurity/trufflehog@v3.90.3
+        uses: trufflesecurity/trufflehog@v3.90.11
         with:
           path: ./
           base: main
